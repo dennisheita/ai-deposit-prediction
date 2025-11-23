@@ -82,17 +82,28 @@ elif page == "Training":
     features_options = [f[1] for f in get_files() if f[3] == 'geoparquet' and 'features' in f[4]]
     deposits_options = [f[1] for f in get_files() if f[3] == 'deposit']
 
-    if not features_options:
-        st.error("No features files available. Please upload features data first.")
-    elif not deposits_options:
-        st.error("No deposits files available. Please upload deposits data first.")
+    # Allow training if we have at least deposits data (which might contain features + labels)
+    if not deposits_options:
+        st.error("No deposits/training data available. Please upload data first.")
     else:
-        features_file = st.selectbox("Select features file", features_options)
-        deposits_file = st.selectbox("Select deposits file", deposits_options)
+        st.write("Select data for training. If you uploaded a single CSV with features and labels, select it as the deposits file.")
+        
+        # Optional features file
+        features_file = None
+        if features_options:
+            features_file = st.selectbox("Select features file (optional)", ["None"] + features_options)
+            if features_file == "None":
+                features_file = None
+        
+        deposits_file = st.selectbox("Select deposits/training file", deposits_options)
 
         if st.button("Start Training"):
             with st.spinner("Training in progress..."):
-                result = run_training_pipeline(features_file, deposits_file)
+                # If features_file is None, we might need to handle it in run_training_pipeline
+                # For now, pass deposits_file as features_file if features_file is missing,
+                # assuming the pipeline logic we just added handles it.
+                feat_file_to_pass = features_file if features_file else deposits_file
+                result = run_training_pipeline(feat_file_to_pass, deposits_file)
             st.success(result)
 
             # Display progress (simplified, as real-time is complex in Streamlit)

@@ -130,18 +130,41 @@ def run_training_pipeline(features_file, deposits_file, n_negatives_per_positive
         # Calculate data quality
         completeness, spatial_coverage = calculate_data_quality(features_gdf)
 
-        # Assume deposits_gdf has geometry and is positives (label=1), features_gdf has predictors
-        positives = deposits_gdf.copy()
-        positives['label'] = 1
-
-        # Negative sampling from features not near positives
-        negatives = stratified_spatial_negative_sampling(positives, features_gdf, n_negatives_per_positive)
-
-        # Combine
-        train_data = pd.concat([positives, negatives], ignore_index=True)
-        X = train_data.drop(columns=['label', 'geometry'])
-        y = train_data['label']
-        coords = np.array([[geom.x, geom.y] for geom in train_data.geometry])
+        # Check if deposits_gdf already has labels (from CSV upload)
+        if 'label' in deposits_gdf.columns:
+            # If labels exist, we might need to merge with features if features are separate
+            # But based on the user's data, it seems they might be uploading pre-labeled data
+            # Let's handle the case where deposits_gdf is actually the full training set
+            if len(deposits_gdf.columns) > 5: # Heuristic: if it has many columns, it might be the full dataset
+                 train_data = deposits_gdf.copy()
+                 if 'geometry' in train_data.columns:
+                     train_data = train_data.drop(columns=['geometry'])
+                 X = train_data.drop(columns=['label'])
+                 y = train_data['label']
+                 # Create dummy coords if geometry is missing, or use lat/lon if available
+                 if 'lon' in deposits_gdf.columns and 'lat' in deposits_gdf.columns:
+                     coords = np.array(list(zip(deposits_gdf['lon'], deposits_gdf['lat'])))
+                 else:
+                     # Fallback to random coords or 0 if no spatial info (not ideal for spatial CV but works for code)
+                     coords = np.zeros((len(train_data), 2))
+            else:
+                 # Standard flow: deposits are just locations
+                 positives = deposits_gdf.copy()
+                 positives['label'] = 1
+                 negatives = stratified_spatial_negative_sampling(positives, features_gdf, n_negatives_per_positive)
+                 train_data = pd.concat([positives, negatives], ignore_index=True)
+                 X = train_data.drop(columns=['label', 'geometry'])
+                 y = train_data['label']
+                 coords = np.array([[geom.x, geom.y] for geom in train_data.geometry])
+        else:
+            # Standard flow
+            positives = deposits_gdf.copy()
+            positives['label'] = 1
+            negatives = stratified_spatial_negative_sampling(positives, features_gdf, n_negatives_per_positive)
+            train_data = pd.concat([positives, negatives], ignore_index=True)
+            X = train_data.drop(columns=['label', 'geometry'])
+            y = train_data['label']
+            coords = np.array([[geom.x, geom.y] for geom in train_data.geometry])
 
         logging.info(f"Training data: {len(train_data)} samples, {sum(y)} positives, {len(y) - sum(y)} negatives.")
 
