@@ -53,6 +53,22 @@ model_path = 'models/rf_deposit_model.joblib'
 joblib.dump(rf, model_path)
 print(f"Model saved to {model_path}")
 
+# Metrics
+test_auc = roc_auc_score(y_test, rf.predict_proba(X_test)[:, 1])
+metrics = {
+    'best_params': {'n_estimators': 100, 'random_state': 42},
+    'best_score': test_auc,
+    'model_path': model_path,
+    'n_features': len(feature_names)
+}
+
+# Insert into database
+from src.data_architecture import insert_model
+import datetime
+version = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+insert_model(version, metrics)
+print(f"Model inserted into database with version {version}")
+
 # Feature importances
 importances = rf.feature_importances_
 feature_importance_df = pd.DataFrame({'feature': feature_names, 'importance': importances})
