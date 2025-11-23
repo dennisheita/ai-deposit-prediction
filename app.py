@@ -79,7 +79,7 @@ elif page == "Training":
     st.title("Training Controls")
     st.write("Start training runs for deposit prediction models.")
 
-    features_options = [f[1] for f in get_files() if f[3] == 'geoparquet' and 'features' in f[4]]
+    features_options = [f[1] for f in get_files() if f[3] == 'geoparquet' and 'features' in f[5]]
     deposits_options = [f[1] for f in get_files() if f[3] == 'deposit']
 
     if not features_options:
