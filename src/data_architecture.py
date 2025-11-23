@@ -89,6 +89,7 @@ def insert_file(filename, file_type, status, path):
 
 def get_files():
     """Retrieve all file records from the database."""
+    initialize_database()  # Ensure tables exist
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM files')
