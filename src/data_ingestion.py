@@ -79,9 +79,17 @@ def process_csv(file_path, data_type='deposits'):
         df = pd.read_csv(file_path)
 
         filename = os.path.basename(file_path)
+        # Ensure filename ends with .csv if it doesn't (though it should based on check above)
+        if not filename.endswith('.csv'):
+             filename += '.csv'
+             
         if data_type == 'features':
-            save_geoparquet(df, filename, 'data/features/')
+            # For features, we might save as parquet if it has geometry, or keep as CSV/parquet if not
+            # save_geoparquet handles the logic of checking for lat/lon
+            save_geoparquet(df, filename.replace('.csv', '.parquet'), 'data/features/')
         else:
+            # For deposits, save_deposit_data handles checking for lat/lon
+            # If it's a CSV without lat/lon, it will be saved as CSV
             save_deposit_data(df, filename, 'data/deposits/')
 
         return f"Successfully processed CSV: {filename}"
