@@ -12,7 +12,7 @@ from sklearn.cluster import KMeans
 from shapely.geometry import Point
 from .data_architecture import load_geoparquet, insert_model
 import multiprocessing
-from .monitoring import track_training_start, track_training_end, log_training_failure, calculate_data_quality
+from .monitoring import track_training_start, track_training_end, log_training_failure, calculate_data_quality, update_training_run
 
 # Directories
 MODELS_DIR = 'models/'
@@ -170,7 +170,6 @@ def run_training_pipeline(features_file, deposits_file, n_negatives_per_positive
         track_training_end(run_id, best_model, X, y, feature_names)
 
         # Update training run with data quality
-        from .monitoring import update_training_run
         update_training_run(run_id, data_completeness=completeness, spatial_coverage=spatial_coverage)
 
         # Log

@@ -79,16 +79,24 @@ elif page == "Training":
     st.title("Training Controls")
     st.write("Start training runs for deposit prediction models.")
 
-    features_file = st.selectbox("Select features file", [f[1] for f in get_files() if f[3] == 'geoparquet' and 'features' in f[4]])
-    deposits_file = st.selectbox("Select deposits file", [f[1] for f in get_files() if f[3] == 'deposit'])
+    features_options = [f[1] for f in get_files() if f[3] == 'geoparquet' and 'features' in f[4]]
+    deposits_options = [f[1] for f in get_files() if f[3] == 'deposit']
 
-    if st.button("Start Training"):
-        with st.spinner("Training in progress..."):
-            result = run_training_pipeline(features_file, deposits_file)
-        st.success(result)
+    if not features_options:
+        st.error("No features files available. Please upload features data first.")
+    elif not deposits_options:
+        st.error("No deposits files available. Please upload deposits data first.")
+    else:
+        features_file = st.selectbox("Select features file", features_options)
+        deposits_file = st.selectbox("Select deposits file", deposits_options)
 
-        # Display progress (simplified, as real-time is complex in Streamlit)
-        st.write("Training completed. Check Statistics Dashboard for details.")
+        if st.button("Start Training"):
+            with st.spinner("Training in progress..."):
+                result = run_training_pipeline(features_file, deposits_file)
+            st.success(result)
+
+            # Display progress (simplified, as real-time is complex in Streamlit)
+            st.write("Training completed. Check Statistics Dashboard for details.")
 
 # Statistics Dashboard
 elif page == "Statistics Dashboard":
