@@ -48,7 +48,7 @@ page = st.sidebar.selectbox("Choose a section", [
 # Data Upload Section
 if page == "Data Upload":
     st.title("Data Upload")
-    st.write("Upload shapefiles or CSV files for features or deposits.")
+    st.write("Upload shapefiles or CSV files. The system will automatically detect if they are features or deposits data.")
 
     uploaded_files = st.file_uploader("Choose files", accept_multiple_files=True, type=['shp', 'zip', 'csv'])
 
@@ -79,7 +79,7 @@ elif page == "Training":
     st.title("Training Controls")
     st.write("Start training runs for deposit prediction models.")
 
-    features_options = [f[1] for f in get_files() if f[3] == 'geoparquet' and 'features' in f[5]]
+    features_options = [f[1] for f in get_files() if f[3] == 'geoparquet' and 'features' in f[4]]
     deposits_options = [f[1] for f in get_files() if f[3] == 'deposit']
 
     if not features_options:

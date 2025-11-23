@@ -70,31 +70,52 @@ def process_shapefile(file_path, data_type='features'):
     except Exception as e:
         return f"Error processing shapefile {file_path}: {str(e)}"
 
-def process_csv(file_path):
-    """Process a CSV file: read, save to deposits."""
+def process_csv(file_path, data_type='deposits'):
+    """Process a CSV file: read, save to appropriate directory."""
     try:
         validate_file_integrity(file_path, 'csv')
 
         # Read CSV
         df = pd.read_csv(file_path)
 
-        # Assume it's deposit data
-        filename = os.path.basename(file_path).replace('.csv', '.csv')  # keep as csv
-        save_deposit_data(df, filename, 'data/deposits/')
+        filename = os.path.basename(file_path)
+        if data_type == 'features':
+            save_geoparquet(df, filename, 'data/features/')
+        else:
+            save_deposit_data(df, filename, 'data/deposits/')
 
         return f"Successfully processed CSV: {filename}"
 
     except Exception as e:
         return f"Error processing CSV {file_path}: {str(e)}"
 
+def detect_data_type(file_path):
+    """Detect if file is features or deposits based on content."""
+    if file_path.endswith('.csv'):
+        try:
+            df = pd.read_csv(file_path)
+            if 'label' in df.columns:
+                return 'deposits'
+            else:
+                return 'features'
+        except Exception:
+            return 'features'
+    else:
+        # For shapefiles, assume features unless filename contains 'deposit'
+        if 'deposit' in file_path.lower():
+            return 'deposits'
+        else:
+            return 'features'
+
 def ingest_files(file_list):
-    """Ingest a list of files, determining type and processing accordingly."""
+    """Ingest a list of files, auto-detecting type and processing accordingly."""
     results = []
     for file_path in file_list:
+        data_type = detect_data_type(file_path)
         if file_path.endswith('.shp') or file_path.endswith('.zip'):
-            result = process_shapefile(file_path)
+            result = process_shapefile(file_path, data_type)
         elif file_path.endswith('.csv'):
-            result = process_csv(file_path)
+            result = process_csv(file_path, data_type)
         else:
             result = f"Unsupported file type: {file_path}"
         results.append(result)
