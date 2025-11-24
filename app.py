@@ -126,45 +126,70 @@ elif page == "Training":
     st.subheader("Quick Training")
 
     if continuous_learning:
-        st.info("🔄 Continuous Learning is enabled. Each training improves the model with accumulated knowledge.")
+        st.info("🔄 Continuous Learning is enabled. Training will run automatically and perpetually.")
 
         training_count = st.session_state.get('training_iterations', 0)
-        if training_count > 0:
-            st.write(f"📊 Completed {training_count} training iterations")
+        is_training_active = st.session_state.get('auto_training_active', False)
 
-        button_text = "🚀 Start/Continue Continuous Training" if training_count == 0 else "🔄 Continue Training (Next Iteration)"
-        if st.button(button_text):
+        col1, col2 = st.columns(2)
+        with col1:
+            if not is_training_active:
+                if st.button("🚀 Start Perpetual Training"):
+                    st.session_state['auto_training_active'] = True
+                    st.session_state['training_iterations'] = 0
+                    st.rerun()  # Trigger immediate rerun to start training
+            else:
+                if st.button("🔴 Stop Perpetual Training"):
+                    st.session_state['auto_training_active'] = False
+                    st.success("Perpetual training stopped.")
+
+        with col2:
+            if training_count > 0:
+                st.metric("Training Iterations", training_count)
+
+        # Automatic training loop
+        if is_training_active:
             training_count += 1
             st.session_state['training_iterations'] = training_count
 
-            with st.spinner(f"Training iteration #{training_count}..."):
-                # Run the train_model.py script
-                import subprocess
-                result = subprocess.run(['python3', 'train_model.py'], capture_output=True, text=True, cwd='.')
+            st.write(f"🏃 Running training iteration #{training_count}...")
 
-                if result.returncode == 0:
-                    st.success(f"✅ Training iteration #{training_count} completed successfully!")
+            # Run the train_model.py script
+            import subprocess
+            result = subprocess.run(['python3', 'train_model.py'], capture_output=True, text=True, cwd='.')
 
-                    # Extract and display metrics
-                    lines = result.stdout.split('\n')
-                    auc_line = next((line for line in lines if 'Test AUC:' in line), None)
-                    acc_line = next((line for line in lines if 'Test Accuracy:' in line), None)
+            if result.returncode == 0:
+                st.success(f"✅ Training iteration #{training_count} completed successfully!")
 
-                    if auc_line:
-                        auc = auc_line.split('Test AUC:')[1].strip()
-                        st.metric("Test AUC", auc)
-                    if acc_line:
-                        acc = acc_line.split('Test Accuracy:')[1].strip()
-                        st.metric("Test Accuracy", acc)
+                # Extract and display metrics
+                lines = result.stdout.split('\n')
+                auc_line = next((line for line in lines if 'Test AUC:' in line), None)
+                acc_line = next((line for line in lines if 'Test Accuracy:' in line), None)
 
-                    st.info("🎯 Model improved! Click 'Continue Training' for the next iteration.")
+                col1, col2 = st.columns(2)
+                if auc_line:
+                    auc = auc_line.split('Test AUC:')[1].strip()
+                    col1.metric("Test AUC", auc)
+                if acc_line:
+                    acc = acc_line.split('Test Accuracy:')[1].strip()
+                    col2.metric("Test Accuracy", acc)
+
+                st.info("🎯 Model improved! Next iteration starting automatically...")
+
+                # Check if continuous learning is still enabled before continuing
+                if st.session_state.get('continuous_learning', False):
+                    import time
+                    time.sleep(3)  # Brief pause between iterations
+                    st.rerun()  # Automatically trigger next iteration
                 else:
-                    st.error(f"❌ Training iteration #{training_count} failed!")
-                    st.code(result.stderr)
+                    st.session_state['auto_training_active'] = False
+                    st.warning("Continuous learning was disabled - stopping perpetual training.")
 
-        if st.button("🔴 Stop Continuous Training"):
-            st.session_state['training_iterations'] = 0
-            st.success("Continuous training stopped. You can restart anytime.")
+            else:
+                st.error(f"❌ Training iteration #{training_count} failed!")
+                st.code(result.stderr)
+                st.session_state['auto_training_active'] = False
+                st.error("Stopping perpetual training due to failure.")
     else:
         if st.button("Train on Existing Pre-split Data"):
             with st.spinner("Training on existing data..."):
