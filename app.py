@@ -440,30 +440,111 @@ elif page == "Map Visualization":
 # Batch Processing
 elif page == "Batch Processing":
     st.title("Batch Processing")
-    st.write("Run multiple training jobs with different parameters.")
+    st.write("Run multiple training jobs with different hyperparameters to find the best model configuration.")
 
-    st.write("This will train models with different n_estimators values on the existing pre-split data.")
+    st.subheader("What are Hyperparameters?")
+    st.write("""
+    **Hyperparameters** are settings that control how the machine learning algorithm learns:
+    - **n_estimators**: Number of decision trees in the Random Forest (more = better but slower)
+    - **max_depth**: Maximum depth of each tree (deeper = more complex patterns but risk of overfitting)
+    - **min_samples_split**: Minimum samples needed to split a node
+    - **min_samples_leaf**: Minimum samples in a leaf node
 
-    if st.button("Start Batch Training"):
-        # Run batch training with different n_estimators
-        n_estimators_list = [100, 500, 1000]
+    Batch processing tests different combinations to find the optimal settings for your data.
+    """)
 
-        results = []
-        progress_bar = st.progress(0)
-        for i, n_est in enumerate(n_estimators_list):
-            st.write(f"Training with n_estimators={n_est}...")
-            import subprocess
-            result = subprocess.run(['python3', 'train_model.py', str(n_est)], capture_output=True, text=True, cwd='.')
-            if result.returncode == 0:
-                results.append(f"n_estimators={n_est}: Success - {result.stdout.split('Test AUC:')[1].split()[0] if 'Test AUC:' in result.stdout else 'Completed'}")
+    # Check if data is available
+    features_options = [f[1] for f in get_files() if f[3] == 'geoparquet' and 'features' in f[4]]
+    deposits_options = [f[1] for f in get_files() if f[3] == 'deposit']
+
+    if not features_options or not deposits_options:
+        st.error("No training data available. Please upload features and deposits data first.")
+        st.info("💡 Tip: Upload your geological feature data (elevation, slope, aspect, geology codes) and known deposit locations.")
+    else:
+        st.subheader("Select Training Data")
+        features_file = st.selectbox("Features file", features_options, key="batch_features")
+        deposits_file = st.selectbox("Deposits file", deposits_options, key="batch_deposits")
+
+        st.subheader("Hyperparameter Tuning")
+        st.write("Select which parameters to test. The system will try all combinations.")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            n_estimators_options = st.multiselect(
+                "n_estimators (trees in forest)",
+                [50, 100, 200, 500],
+                default=[100, 200]
+            )
+            max_depth_options = st.multiselect(
+                "max_depth (tree depth)",
+                [10, 20, 30, None],
+                default=[20, None]
+            )
+
+        with col2:
+            min_samples_split_options = st.multiselect(
+                "min_samples_split",
+                [2, 5, 10],
+                default=[2, 5]
+            )
+            min_samples_leaf_options = st.multiselect(
+                "min_samples_leaf",
+                [1, 2, 4],
+                default=[1, 2]
+            )
+
+        if st.button("Start Hyperparameter Tuning"):
+            if not n_estimators_options or not max_depth_options:
+                st.error("Please select at least one option for n_estimators and max_depth.")
             else:
-                results.append(f"n_estimators={n_est}: Failed")
-            progress_bar.progress((i+1) / len(n_estimators_list))
+                # Generate parameter combinations
+                param_combinations = []
+                for n_est in n_estimators_options:
+                    for max_d in max_depth_options:
+                        for min_split in min_samples_split_options:
+                            for min_leaf in min_samples_leaf_options:
+                                param_combinations.append({
+                                    'n_estimators': [n_est],
+                                    'max_depth': [max_d],
+                                    'min_samples_split': [min_split],
+                                    'min_samples_leaf': [min_leaf]
+                                })
 
-        st.write("Batch results:")
-        for res in results:
-            st.write(res)
-        st.success("Batch training completed!")
+                st.write(f"🔄 Will test {len(param_combinations)} parameter combinations")
+                st.write("This may take several minutes depending on your data size and parameter combinations.")
+
+                results = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                for i, params in enumerate(param_combinations):
+                    param_desc = f"n_est={params['n_estimators'][0]}, depth={params['max_depth'][0] or 'None'}, split={params['min_samples_split'][0]}, leaf={params['min_samples_leaf'][0]}"
+                    status_text.text(f"Training model {i+1}/{len(param_combinations)}: {param_desc}")
+                    try:
+                        result = run_training_pipeline(features_file, deposits_file, param_grid=params)
+                        # Extract AUC from result string
+                        auc_match = result.split('AUC ') if 'AUC ' in result else ['N/A']
+                        auc = auc_match[-1].split()[0] if len(auc_match) > 1 else 'N/A'
+                        results.append(f"✅ Model {i+1}: {param_desc} - AUC: {auc}")
+                    except Exception as e:
+                        results.append(f"❌ Model {i+1}: {param_desc} - Failed: {str(e)[:50]}...")
+
+                    progress_bar.progress((i+1) / len(param_combinations))
+
+                status_text.text("🎉 Hyperparameter tuning completed!")
+                st.subheader("Results Summary")
+                st.write("Models trained with different hyperparameters:")
+
+                # Show best result
+                successful_results = [r for r in results if 'AUC:' in r]
+                if successful_results:
+                    best_result = max(successful_results, key=lambda x: float(x.split('AUC: ')[1]) if 'AUC: ' in x else 0)
+                    st.success(f"🏆 Best performing model: {best_result}")
+
+                # Show all results
+                for res in results:
+                    st.write(res)
 
 # Model Comparison
 elif page == "Model Comparison":
