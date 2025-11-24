@@ -88,58 +88,48 @@ elif page == "Training":
     # that got classified as 'deposit' but contains everything
     all_training_options = list(set(deposits_options + features_options))
 
+    # Always show the button to train on existing pre-split data
+    st.subheader("Quick Training")
+    if st.button("Train on Existing Pre-split Data"):
+        with st.spinner("Training on existing data..."):
+            # Run the train_model.py script
+            import subprocess
+            result = subprocess.run(['python3', 'train_model.py'], capture_output=True, text=True, cwd='.')
+            if result.returncode == 0:
+                st.success("Model trained successfully on existing data!")
+                st.text("Output:")
+                st.code(result.stdout)
+            else:
+                st.error("Training failed!")
+                st.text("Error:")
+                st.code(result.stderr)
+        st.write("Training completed. Check Statistics Dashboard for details.")
+
+    st.subheader("Training on Uploaded Data")
     # Allow training if we have any data
     if not all_training_options:
-        st.error("No training data available. Please upload data first.")
+        st.error("No uploaded training data available. Please upload data first or use the quick training option above.")
     else:
         st.write("Select data for training. If you uploaded a single CSV with features and labels, select it here.")
-        
+
         # Main training file (can be deposits or combined)
         training_file = st.selectbox("Select training data file", all_training_options)
-        
+
         # Optional separate features file (only if needed)
         features_file = st.selectbox("Select separate features file (optional)", ["None"] + features_options)
         if features_file == "None":
             features_file = None
-            
+
         # If features_file is not selected, we assume training_file has everything or is the deposits file
         # We pass training_file as deposits_file to the pipeline
         deposits_file = training_file
 
-        if st.button("Start Training"):
+        if st.button("Start Training on Uploaded Data"):
             with st.spinner("Training in progress..."):
                 # If features_file is None, pass deposits_file as features_file too
                 # The pipeline handles the logic of checking if it's a combined file
                 feat_file_to_pass = features_file if features_file else deposits_file
-                
-                result = run_training_pipeline(feat_file_to_pass, deposits_file)
-            st.success(result)
 
-            # Display progress (simplified, as real-time is complex in Streamlit)
-            st.write("Training completed. Check Statistics Dashboard for details.")
-
-        # Add button to train on the existing pre-split data
-        if st.button("Train on Existing Pre-split Data"):
-            with st.spinner("Training on existing data..."):
-                # Run the train_model.py script
-                import subprocess
-                result = subprocess.run(['python3', 'train_model.py'], capture_output=True, text=True, cwd='.')
-                if result.returncode == 0:
-                    st.success("Model trained successfully on existing data!")
-                    st.text("Output:")
-                    st.code(result.stdout)
-                else:
-                    st.error("Training failed!")
-                    st.text("Error:")
-                    st.code(result.stderr)
-            st.write("Training completed. Check Statistics Dashboard for details.")
-
-        if st.button("Start Training"):
-            with st.spinner("Training in progress..."):
-                # If features_file is None, we might need to handle it in run_training_pipeline
-                # For now, pass deposits_file as features_file if features_file is missing,
-                # assuming the pipeline logic we just added handles it.
-                feat_file_to_pass = features_file if features_file else deposits_file
                 result = run_training_pipeline(feat_file_to_pass, deposits_file)
             st.success(result)
 
