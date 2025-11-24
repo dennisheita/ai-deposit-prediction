@@ -42,7 +42,8 @@ page = st.sidebar.selectbox("Choose a section", [
     "Map Visualization",
     "Batch Processing",
     "Model Comparison",
-    "Download Center"
+    "Download Center",
+    "Data Management"
 ])
 
 # Data Upload Section
@@ -508,3 +509,43 @@ elif page == "Download Center":
                 st.download_button("Download", f, file_name=selected_file)
         else:
             st.error("File not found")
+
+# Data Management Section
+elif page == "Data Management":
+    st.title("Data Management")
+    st.write("Manage uploaded datasets, models, and system data.")
+
+    st.subheader("Delete All Datasets")
+    st.warning("⚠️ This will permanently delete all uploaded files, trained models, predictions, and database records. This action cannot be undone.")
+
+    if st.button("Delete All Datasets", type="primary"):
+        with st.spinner("Deleting all datasets..."):
+            import os
+            import shutil
+            import sqlite3
+
+            # Delete data files
+            data_dirs = ['data/features', 'data/deposits', 'data/predictions', 'models', 'logs']
+            for dir_path in data_dirs:
+                if os.path.exists(dir_path):
+                    for file in os.listdir(dir_path):
+                        file_path = os.path.join(dir_path, file)
+                        try:
+                            if os.path.isfile(file_path):
+                                os.unlink(file_path)
+                        except Exception as e:
+                            st.warning(f"Could not delete {file_path}: {e}")
+
+            # Reset database
+            try:
+                db_path = 'data/metadata.db'
+                if os.path.exists(db_path):
+                    os.unlink(db_path)
+                # Recreate database
+                from src.data_architecture import initialize_database
+                initialize_database()
+            except Exception as e:
+                st.error(f"Could not reset database: {e}")
+
+        st.success("All datasets have been deleted and the system has been reset.")
+        st.info("The application will continue running. You can now upload new data.")
