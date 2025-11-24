@@ -71,6 +71,27 @@ if page == "Data Upload":
             for result in results:
                 st.write(result)
 
+            # Check for continuous learning
+            if st.session_state.get('continuous_learning', False):
+                st.info("🔄 Continuous learning enabled - retraining model with new data...")
+                with st.spinner("Retraining model..."):
+                    # Get latest data for retraining
+                    features_options = [f[1] for f in get_files() if f[3] == 'geoparquet']
+                    deposits_options = [f[1] for f in get_files() if f[3] == 'deposit']
+
+                    if features_options and deposits_options:
+                        # Use the most recently uploaded files
+                        features_file = features_options[-1]  # Last uploaded
+                        deposits_file = deposits_options[-1]  # Last uploaded
+
+                        try:
+                            result = run_training_pipeline(features_file, deposits_file)
+                            st.success(f"✅ Model retrained successfully! {result}")
+                        except Exception as e:
+                            st.warning(f"⚠️ Retraining failed: {str(e)}. You can manually retrain in the Training section.")
+                    else:
+                        st.warning("⚠️ Could not retrain - missing features or deposits data.")
+
             # Clean up temp files
             for path in file_paths:
                 os.unlink(path)
@@ -80,13 +101,25 @@ elif page == "Training":
     st.title("Training Controls")
     st.write("Start training runs for deposit prediction models.")
 
+    # Continuous Learning Mode
+    st.subheader("🚀 Continuous Learning Mode")
+    st.write("Automatically retrain the model when new data is uploaded.")
+
+    continuous_learning = st.checkbox("Enable Continuous Learning", value=st.session_state.get('continuous_learning', False))
+    st.session_state['continuous_learning'] = continuous_learning
+    if continuous_learning:
+        st.info("✅ Continuous learning enabled. The model will be retrained automatically when you upload new data in the Data Upload section.")
+        st.write("**How it works:**")
+        st.write("1. Upload new features or deposits data")
+        st.write("2. The system automatically retrains using all available data")
+        st.write("3. New model replaces the old one")
+        st.write("4. Check Statistics Dashboard for updated performance")
+
     # Get all available files that could be used for training
-    # Features might be in 'geoparquet' (features) or 'deposit' (if it's a combined CSV)
     features_options = [f[1] for f in get_files() if f[3] == 'geoparquet']
     deposits_options = [f[1] for f in get_files() if f[3] == 'deposit']
-    
-    # Combine options for the main training file selection since the user might have uploaded a single CSV
-    # that got classified as 'deposit' but contains everything
+
+    # Combine options for the main training file selection
     all_training_options = list(set(deposits_options + features_options))
 
     # Always show the button to train on existing pre-split data
@@ -122,13 +155,11 @@ elif page == "Training":
             features_file = None
 
         # If features_file is not selected, we assume training_file has everything or is the deposits file
-        # We pass training_file as deposits_file to the pipeline
         deposits_file = training_file
 
         if st.button("Start Training on Uploaded Data"):
             with st.spinner("Training in progress..."):
                 # If features_file is None, pass deposits_file as features_file too
-                # The pipeline handles the logic of checking if it's a combined file
                 feat_file_to_pass = features_file if features_file else deposits_file
 
                 result = run_training_pipeline(feat_file_to_pass, deposits_file)
