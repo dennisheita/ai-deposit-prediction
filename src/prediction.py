@@ -9,15 +9,29 @@ from src.data_architecture import get_models, save_prediction_data, load_geoparq
 import geopandas as gpd
 from src.feature_engineering import FeatureEngineer
 import json
+import tempfile
 
 def load_prediction_area(file_path, file_type='shp'):
-    """Load prediction area from shapefile or GeoJSON."""
+    """Load prediction area from shapefile, GeoJSON, or CSV, converting to EPSG:4326."""
     if file_type == 'shp':
         gdf = gpd.read_file(file_path)
     elif file_type == 'geojson':
         gdf = gpd.read_file(file_path, driver='GeoJSON')
+    elif file_type == 'csv':
+        df = pd.read_csv(file_path)
+        # Convert to GeoDataFrame if it has lat/lon
+        if 'lat' in df.columns and 'lon' in df.columns:
+            gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['lon'], df['lat']), crs='EPSG:4326')
+        else:
+            # Create dummy geometry for tabular data
+            gdf = gpd.GeoDataFrame(df, geometry=[Point(0, 0)] * len(df), crs='EPSG:4326')
     else:
         raise ValueError("Unsupported file type")
+
+    # Convert to EPSG:4326 if not already
+    if gdf.crs != 'EPSG:4326':
+        gdf = gdf.to_crs('EPSG:4326')
+
     return gdf
 
 def apply_feature_engineering(prediction_gdf, base_features_file='features.parquet'):
@@ -79,9 +93,21 @@ def load_model(model_version):
 def generate_predictions(model, features_gdf, feature_cols=None):
     """Generate probability predictions."""
     if feature_cols is None:
-        # Assume all numeric columns except geometry
+        # Assume all numeric columns except geometry, lat, lon
         feature_cols = features_gdf.select_dtypes(include=[np.number]).columns.tolist()
-        feature_cols = [c for c in feature_cols if c != 'geometry']
+        feature_cols = [c for c in feature_cols if c not in ['geometry', 'lat', 'lon']]
+
+    # Ensure feature columns are in the same order as training
+    # Get expected features from model (if available) or use the order from training data
+    if hasattr(model, 'feature_names_in_'):
+        expected_features = model.feature_names_in_.tolist()
+        # Filter to only include features that exist in the data
+        feature_cols = [f for f in expected_features if f in features_gdf.columns]
+        # Add any missing expected features with NaN
+        for f in expected_features:
+            if f not in features_gdf.columns:
+                features_gdf[f] = np.nan
+        feature_cols = expected_features
 
     X = features_gdf[feature_cols]
     # Handle NaNs
@@ -107,11 +133,28 @@ def export_to_shapefile(predictions_gdf, output_path):
 
 def run_prediction_pipeline(prediction_area_path, model_version, threshold=0.5, output_filename=None, base_features_file='features.parquet'):
     """Main prediction pipeline."""
-    # Load prediction area
-    prediction_gdf = load_prediction_area(prediction_area_path)
+    # Determine file type from path
+    if prediction_area_path.endswith('.csv'):
+        file_type = 'csv'
+    elif prediction_area_path.endswith('.geojson'):
+        file_type = 'geojson'
+    else:
+        file_type = 'shp'
 
-    # Apply feature engineering
-    prediction_gdf = apply_feature_engineering(prediction_gdf, base_features_file)
+    # Load prediction area
+    prediction_gdf = load_prediction_area(prediction_area_path, file_type)
+
+    # Check if prediction area already has the required features (like from CSV upload)
+    # If it has columns like elevation, slope, aspect, geology codes, use them directly
+    feature_columns = ['elevation', 'slope', 'aspect'] + [f'geology_code_{i}' for i in range(1, 29)] + ['geology_code_unknown']
+    has_features = any(col in prediction_gdf.columns for col in feature_columns)
+
+    if has_features:
+        # Use existing features, skip engineering
+        pass
+    else:
+        # Apply feature engineering (but this may not match training features)
+        prediction_gdf = apply_feature_engineering(prediction_gdf, base_features_file)
 
     # Load model
     model = load_model(model_version)
@@ -132,3 +175,43 @@ def run_prediction_pipeline(prediction_area_path, model_version, threshold=0.5, 
     save_prediction_data(prediction_gdf, output_filename)
 
     return output_filename, prediction_gdf
+
+def convert_spatial_to_csv(input_path, output_path=None):
+    """Convert shapefile or GeoJSON to CSV with lat/lon coordinates and template prediction features."""
+    # Determine file type
+    if input_path.endswith('.geojson'):
+        gdf = gpd.read_file(input_path, driver='GeoJSON')
+    else:
+        gdf = gpd.read_file(input_path)
+
+    # Convert to EPSG:4326 (WGS84) for lat/lon coordinates
+    if gdf.crs != 'EPSG:4326':
+        gdf = gdf.to_crs('EPSG:4326')
+
+    # Extract lat/lon from geometries
+    if gdf.geometry.type.iloc[0] == 'Point':
+        gdf['lat'] = gdf.geometry.y
+        gdf['lon'] = gdf.geometry.x
+    else:
+        # For polygons/multi-polygons, use centroid
+        centroids = gdf.geometry.centroid
+        gdf['lat'] = centroids.y
+        gdf['lon'] = centroids.x
+
+    # Drop geometry column
+    df = gdf.drop(columns='geometry')
+
+    # Add template columns for prediction features (with NaN values)
+    feature_columns = ['elevation', 'slope', 'aspect'] + [f'geology_code_{i}' for i in range(1, 29)] + ['geology_code_unknown']
+    for col in feature_columns:
+        if col not in df.columns:
+            df[col] = np.nan
+
+    # Save to CSV
+    if output_path is None:
+        base_name = os.path.splitext(os.path.basename(input_path))[0]
+        output_path = f"data/predictions/{base_name}_converted.csv"
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    df.to_csv(output_path, index=False)
+    return output_path

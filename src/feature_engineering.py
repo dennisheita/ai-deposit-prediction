@@ -33,7 +33,8 @@ class FeatureEngineer:
             )
 
         # Kernel density estimation (simplified, assuming 2D points)
-        coords = np.array([[geom.x, geom.y] for geom in gdf.geometry])
+        # Handle different geometry types: use centroid for non-point geometries
+        coords = np.array([[geom.centroid.x, geom.centroid.y] if hasattr(geom, 'centroid') else [geom.x, geom.y] for geom in gdf.geometry])
         kde = KernelDensity(bandwidth=1.0, kernel='gaussian')
         kde.fit(coords)
         features['kernel_density'] = kde.score_samples(coords)
@@ -41,9 +42,13 @@ class FeatureEngineer:
         # Spatial autocorrelation (Moran's I approximation using distance weights)
         # Simplified: average distance to k nearest neighbors
         from sklearn.neighbors import NearestNeighbors
-        nbrs = NearestNeighbors(n_neighbors=5, algorithm='ball_tree').fit(coords)
-        distances, indices = nbrs.kneighbors(coords)
-        features['spatial_autocorr'] = np.mean(distances, axis=1)
+        n_neighbors = min(5, len(coords) - 1) if len(coords) > 1 else 1
+        if n_neighbors > 0:
+            nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm='ball_tree').fit(coords)
+            distances, indices = nbrs.kneighbors(coords)
+            features['spatial_autocorr'] = np.mean(distances, axis=1)
+        else:
+            features['spatial_autocorr'] = 0  # No neighbors
 
         return features
 
@@ -139,14 +144,19 @@ class FeatureEngineer:
         """Compute spatial lag features."""
         # Lag of a feature, e.g., average of neighbors
         from sklearn.neighbors import kneighbors_graph
-        coords = np.array([[geom.x, geom.y] for geom in gdf.geometry])
-        graph = kneighbors_graph(coords, n_neighbors=5, mode='connectivity', include_self=False)
-        # For each feature, compute lag
-        lag_features = {}
-        for col in features_df.select_dtypes(include=[np.number]).columns:
-            lag = graph.dot(features_df[col].values) / graph.sum(axis=1).A1
-            lag_features[f'{col}_lag'] = lag
-        return pd.DataFrame(lag_features, index=gdf.index)
+        coords = np.array([[geom.centroid.x, geom.centroid.y] if hasattr(geom, 'centroid') else [geom.x, geom.y] for geom in gdf.geometry])
+        n_neighbors = min(5, len(coords) - 1) if len(coords) > 1 else 0
+        if n_neighbors > 0:
+            graph = kneighbors_graph(coords, n_neighbors=n_neighbors, mode='connectivity', include_self=False)
+            # For each feature, compute lag
+            lag_features = {}
+            for col in features_df.select_dtypes(include=[np.number]).columns:
+                lag = graph.dot(features_df[col].values) / graph.sum(axis=1).A1
+                lag_features[f'{col}_lag'] = lag
+            return pd.DataFrame(lag_features, index=gdf.index)
+        else:
+            # No neighbors, return empty DataFrame
+            return pd.DataFrame(index=gdf.index)
 
     def compute_multi_scale_features(self, gdf, features_df):
         """Compute multi-scale features: features at different buffer sizes."""

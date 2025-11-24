@@ -187,6 +187,24 @@ def plot_feature_importance_evolution():
     plt.tight_layout()
     return fig
 
+def resolve_alert(alert_id):
+    """Mark an alert as resolved."""
+    from .data_architecture import get_alerts
+    # Since get_alerts is already imported at the top, but to be safe
+    # Actually, it's imported as get_alerts from data_architecture
+    # But we need to update the alert in the database
+    # The data_architecture has resolve_alert? No.
+    # I need to add resolve_alert to data_architecture.py
+
+    # For now, let's implement it here
+    import sqlite3
+    from .data_architecture import DB_PATH
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE alerts SET resolved = 1 WHERE id = ?', (alert_id,))
+    conn.commit()
+    conn.close()
+
 def get_active_alerts():
     """Get unresolved alerts for display."""
     alerts = get_alerts(resolved=False)

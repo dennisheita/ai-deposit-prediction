@@ -21,7 +21,7 @@ from src.data_ingestion import ingest_files
 from src.feature_engineering import FeatureEngineer
 from src.training_pipeline import run_training_pipeline
 from src.monitoring import get_active_alerts, generate_performance_report, plot_performance_trends, plot_feature_importance_evolution
-from src.prediction import run_prediction_pipeline
+from src.prediction import run_prediction_pipeline, convert_spatial_to_csv
 
 # Set page config
 st.set_page_config(page_title="AI Deposit Prediction", layout="wide")
@@ -199,16 +199,72 @@ elif page == "Statistics Dashboard":
 # Prediction Section
 elif page == "Prediction":
     st.title("Prediction Interface")
-    st.write("Upload prediction areas and generate outputs.")
+    st.write("Upload prediction data with the same features as training (CSV format) or shapefiles/GeoJSON for spatial areas.")
 
-    prediction_file = st.file_uploader("Upload prediction shapefile or GeoJSON", type=['shp', 'zip', 'geojson'])
+    # Conversion tool
+    st.subheader("Convert Spatial Data to CSV")
+    st.write("Convert shapefiles or GeoJSON to CSV format with lat/lon coordinates for prediction.")
+    convert_file = st.file_uploader("Upload shapefile or GeoJSON to convert", type=['shp', 'zip', 'geojson'], key='convert')
+    if convert_file and st.button("Convert to CSV"):
+        with st.spinner("Converting..."):
+            # Save uploaded file temporarily
+            if convert_file.name.endswith('.zip'):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+                    tmp.write(convert_file.read())
+                    temp_path = tmp.name
+                # Extract
+                extract_dir = tempfile.mkdtemp()
+                import zipfile
+                with zipfile.ZipFile(temp_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+                # Find shapefile
+                for file in os.listdir(extract_dir):
+                    if file.endswith('.shp'):
+                        input_path = os.path.join(extract_dir, file)
+                        break
+                else:
+                    st.error("No shapefile found in zip")
+                    input_path = None
+            else:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{convert_file.name.split('.')[-1]}") as tmp:
+                    tmp.write(convert_file.read())
+                    input_path = tmp.name
+
+            if input_path:
+                output_path = convert_spatial_to_csv(input_path)
+                st.success(f"Converted and saved as {os.path.basename(output_path)}")
+                # Offer download
+                with open(output_path, "rb") as f:
+                    st.download_button("Download Converted CSV", f, file_name=os.path.basename(output_path))
+
+        # Clean up
+        if 'temp_path' in locals():
+            os.unlink(temp_path)
+        if 'extract_dir' in locals():
+            import shutil
+            shutil.rmtree(extract_dir)
+        if 'input_path' in locals() and os.path.exists(input_path):
+            os.unlink(input_path)
+
+    st.subheader("Run Prediction")
+    prediction_file = st.file_uploader("Upload prediction data (CSV, shapefile, or GeoJSON)", type=['csv', 'shp', 'zip', 'geojson'])
     model_version = st.selectbox("Select model", [m[1] for m in get_models()])
     threshold = st.slider("Prediction threshold", 0.0, 1.0, 0.5, 0.01)
 
     if st.button("Run Prediction") and prediction_file and model_version:
         with st.spinner("Running prediction pipeline..."):
+            # Determine file type
+            if prediction_file.name.endswith('.csv'):
+                file_type = 'csv'
+                suffix = '.csv'
+            elif prediction_file.name.endswith('.geojson'):
+                file_type = 'geojson'
+                suffix = '.geojson'
+            else:
+                file_type = 'shp'
+                suffix = '.zip' if prediction_file.name.endswith('.zip') else '.shp'
+
             # Process uploaded file
-            file_type = 'geojson' if prediction_file.name.endswith('.geojson') else 'shp'
             if file_type == 'shp' and prediction_file.name.endswith('.zip'):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
                     tmp.write(prediction_file.read())
@@ -225,7 +281,7 @@ elif page == "Prediction":
                         break
                 prediction_area_path = shp_path
             else:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_type}") as tmp:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                     tmp.write(prediction_file.read())
                     prediction_area_path = tmp.name
 
@@ -234,6 +290,26 @@ elif page == "Prediction":
                     output_filename, pred_gdf = run_prediction_pipeline(prediction_area_path, model_version, threshold)
                     st.success(f"Prediction completed and saved as {output_filename}")
                     st.write(f"Generated {len(pred_gdf)} predictions")
+
+                    # Provide download link for the shapefile
+                    shapefile_path = f"data/predictions/{output_filename}"
+                    if os.path.exists(shapefile_path):
+                        # Create a zip file with all shapefile components
+                        import zipfile
+                        zip_path = shapefile_path.replace('.shp', '.zip')
+                        with zipfile.ZipFile(zip_path, 'w') as zipf:
+                            for ext in ['.shp', '.shx', '.dbf', '.prj', '.cpg']:
+                                file_path = shapefile_path.replace('.shp', ext)
+                                if os.path.exists(file_path):
+                                    zipf.write(file_path, os.path.basename(file_path))
+
+                        with open(zip_path, "rb") as f:
+                            st.download_button(
+                                label="Download Prediction Shapefile",
+                                data=f,
+                                file_name=f"{output_filename.replace('.shp', '.zip')}",
+                                mime="application/zip"
+                            )
                 except Exception as e:
                     st.error(f"Prediction failed: {str(e)}")
 
@@ -251,8 +327,23 @@ elif page == "Map Visualization":
     st.title("Map Visualization")
     st.write("Interactive deposit probability heatmaps with overlays.")
 
-    prediction_files = [f[1] for f in get_files() if f[3] == 'prediction']
-    selected_pred = st.selectbox("Select prediction file", prediction_files)
+    # Get prediction files from database
+    prediction_files_db = [f[1] for f in get_files() if f[3] == 'prediction']
+
+    # Also check for shapefiles in the predictions directory
+    import glob
+    prediction_dir = 'data/predictions/'
+    shapefiles = glob.glob(os.path.join(prediction_dir, '*.shp'))
+    prediction_files_dir = [os.path.basename(f).replace('.shp', '') for f in shapefiles]
+
+    # Combine and deduplicate
+    prediction_files = list(set(prediction_files_db + prediction_files_dir))
+
+    if not prediction_files:
+        st.warning("No prediction files available. Please run a prediction first.")
+        selected_pred = None
+    else:
+        selected_pred = st.selectbox("Select prediction file", prediction_files)
 
     # Options for overlays
     show_heatmaps = st.checkbox("Show Probability Heatmap", value=True)
@@ -262,29 +353,40 @@ elif page == "Map Visualization":
     overlay_deposits = st.checkbox("Overlay Known Deposits", value=False)
 
     if selected_pred:
-        pred_gdf = gpd.read_file(f"data/predictions/{selected_pred}")
+        # Try with .shp extension first
+        shp_path = f"data/predictions/{selected_pred}.shp"
+        if os.path.exists(shp_path):
+            pred_gdf = gpd.read_file(shp_path)
+        else:
+            # Try without extension (might be a different format)
+            pred_gdf = gpd.read_file(f"data/predictions/{selected_pred}")
 
         # Create Folium map
         center_lat = pred_gdf.geometry.centroid.y.mean()
         center_lon = pred_gdf.geometry.centroid.x.mean()
         m = folium.Map(location=[center_lat, center_lon], zoom_start=10)
 
+        # Get correct column names (shapefiles truncate to 10 chars)
+        prob_col = 'probabilit' if 'probabilit' in pred_gdf.columns else 'probability'
+        pred_col = 'predictio' if 'predictio' in pred_gdf.columns else 'prediction'
+        conf_col = 'confidenc' if 'confidenc' in pred_gdf.columns else 'confidence'
+
         # Add heatmap
         if show_heatmaps:
-            heat_data = [[row.geometry.y, row.geometry.x, row.probability] for idx, row in pred_gdf.iterrows()]
+            heat_data = [[row.geometry.y, row.geometry.x, row[prob_col]] for idx, row in pred_gdf.iterrows()]
             HeatMap(heat_data, name="Probability Heatmap").add_to(m)
 
         # Add prediction points
         if show_predictions:
             for idx, row in pred_gdf.iterrows():
-                color = 'red' if row['prediction'] == 1 else 'blue'
+                color = 'red' if row[pred_col] == 1 else 'blue'
                 folium.CircleMarker(
                     location=[row.geometry.y, row.geometry.x],
                     radius=5,
                     color=color,
                     fill=True,
                     fill_color=color,
-                    popup=f"Prob: {row.probability:.2f}, Pred: {row['prediction']}, Conf: {row.get('confidence', 'N/A'):.2f}"
+                    popup=f"Prob: {row[prob_col]:.2f}, Pred: {row[pred_col]}, Conf: {row.get(conf_col, 'N/A'):.2f}"
                 ).add_to(m)
 
         # Overlay faults
@@ -337,30 +439,30 @@ elif page == "Map Visualization":
 # Batch Processing
 elif page == "Batch Processing":
     st.title("Batch Processing")
-    st.write("Queue multiple training jobs.")
+    st.write("Run multiple training jobs with different parameters.")
 
-    # Simple implementation: allow multiple parameter sets
-    st.write("Feature: Select multiple parameter combinations.")
+    st.write("This will train models with different n_estimators values on the existing pre-split data.")
 
-    # For simplicity, just run multiple trainings sequentially
     if st.button("Start Batch Training"):
-        # Example: run with different n_estimators
-        params_list = [
-            {'n_estimators': [100]},
-            {'n_estimators': [500]},
-            {'n_estimators': [1000]}
-        ]
+        # Run batch training with different n_estimators
+        n_estimators_list = [100, 500, 1000]
 
         results = []
         progress_bar = st.progress(0)
-        for i, params in enumerate(params_list):
-            result = run_training_pipeline('features.parquet', 'deposits.parquet', param_grid=params)
-            results.append(result)
-            progress_bar.progress((i+1) / len(params_list))
+        for i, n_est in enumerate(n_estimators_list):
+            st.write(f"Training with n_estimators={n_est}...")
+            import subprocess
+            result = subprocess.run(['python3', 'train_model.py', str(n_est)], capture_output=True, text=True, cwd='.')
+            if result.returncode == 0:
+                results.append(f"n_estimators={n_est}: Success - {result.stdout.split('Test AUC:')[1].split()[0] if 'Test AUC:' in result.stdout else 'Completed'}")
+            else:
+                results.append(f"n_estimators={n_est}: Failed")
+            progress_bar.progress((i+1) / len(n_estimators_list))
 
         st.write("Batch results:")
         for res in results:
             st.write(res)
+        st.success("Batch training completed!")
 
 # Model Comparison
 elif page == "Model Comparison":

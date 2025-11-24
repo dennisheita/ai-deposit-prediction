@@ -49,6 +49,10 @@ def process_shapefile(file_path, data_type='features'):
         # Read shapefile
         gdf = gpd.read_file(shp_path)
 
+        # Convert to EPSG:4326 if not already
+        if gdf.crs != 'EPSG:4326':
+            gdf = gdf.to_crs('EPSG:4326')
+
         # Validate CRS
         validate_crs(gdf)
 

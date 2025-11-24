@@ -155,7 +155,7 @@ def run_training_pipeline(features_file, deposits_file, n_negatives_per_positive
                  train_data = pd.concat([positives, negatives], ignore_index=True)
                  X = train_data.drop(columns=['label', 'geometry'])
                  y = train_data['label']
-                 coords = np.array([[geom.x, geom.y] for geom in train_data.geometry])
+                 coords = np.array([[geom.centroid.x, geom.centroid.y] if hasattr(geom, 'centroid') else [geom.x, geom.y] for geom in train_data.geometry])
         else:
             # Standard flow
             positives = deposits_gdf.copy()

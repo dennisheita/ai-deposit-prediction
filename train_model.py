@@ -4,6 +4,15 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
 import joblib
 import os
+import sys
+
+# Get n_estimators from command line argument, default to 100
+n_estimators = 100
+if len(sys.argv) > 1:
+    try:
+        n_estimators = int(sys.argv[1])
+    except ValueError:
+        pass
 
 # Load data
 data_dir = 'ml_data copy'
@@ -29,7 +38,7 @@ print(f"Validation data shape: {X_val.shape}")
 print(f"Features: {feature_names}")
 
 # Train Random Forest
-rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+rf = RandomForestClassifier(n_estimators=n_estimators, random_state=42, n_jobs=-1)
 rf.fit(X_train, y_train)
 
 # Evaluate
