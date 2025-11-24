@@ -124,20 +124,62 @@ elif page == "Training":
 
     # Always show the button to train on existing pre-split data
     st.subheader("Quick Training")
-    if st.button("Train on Existing Pre-split Data"):
-        with st.spinner("Training on existing data..."):
-            # Run the train_model.py script
-            import subprocess
-            result = subprocess.run(['python3', 'train_model.py'], capture_output=True, text=True, cwd='.')
-            if result.returncode == 0:
-                st.success("Model trained successfully on existing data!")
-                st.text("Output:")
-                st.code(result.stdout)
-            else:
-                st.error("Training failed!")
-                st.text("Error:")
-                st.code(result.stderr)
-        st.write("Training completed. Check Statistics Dashboard for details.")
+
+    if continuous_learning:
+        st.info("🔄 Continuous Learning is enabled. Each training improves the model with accumulated knowledge.")
+
+        training_count = st.session_state.get('training_iterations', 0)
+        if training_count > 0:
+            st.write(f"📊 Completed {training_count} training iterations")
+
+        button_text = "🚀 Start/Continue Continuous Training" if training_count == 0 else "🔄 Continue Training (Next Iteration)"
+        if st.button(button_text):
+            training_count += 1
+            st.session_state['training_iterations'] = training_count
+
+            with st.spinner(f"Training iteration #{training_count}..."):
+                # Run the train_model.py script
+                import subprocess
+                result = subprocess.run(['python3', 'train_model.py'], capture_output=True, text=True, cwd='.')
+
+                if result.returncode == 0:
+                    st.success(f"✅ Training iteration #{training_count} completed successfully!")
+
+                    # Extract and display metrics
+                    lines = result.stdout.split('\n')
+                    auc_line = next((line for line in lines if 'Test AUC:' in line), None)
+                    acc_line = next((line for line in lines if 'Test Accuracy:' in line), None)
+
+                    if auc_line:
+                        auc = auc_line.split('Test AUC:')[1].strip()
+                        st.metric("Test AUC", auc)
+                    if acc_line:
+                        acc = acc_line.split('Test Accuracy:')[1].strip()
+                        st.metric("Test Accuracy", acc)
+
+                    st.info("🎯 Model improved! Click 'Continue Training' for the next iteration.")
+                else:
+                    st.error(f"❌ Training iteration #{training_count} failed!")
+                    st.code(result.stderr)
+
+        if st.button("🔴 Stop Continuous Training"):
+            st.session_state['training_iterations'] = 0
+            st.success("Continuous training stopped. You can restart anytime.")
+    else:
+        if st.button("Train on Existing Pre-split Data"):
+            with st.spinner("Training on existing data..."):
+                # Run the train_model.py script
+                import subprocess
+                result = subprocess.run(['python3', 'train_model.py'], capture_output=True, text=True, cwd='.')
+                if result.returncode == 0:
+                    st.success("Model trained successfully on existing data!")
+                    st.text("Output:")
+                    st.code(result.stdout)
+                else:
+                    st.error("Training failed!")
+                    st.text("Error:")
+                    st.code(result.stderr)
+            st.write("Training completed. Check Statistics Dashboard for details.")
 
     st.subheader("Training on Uploaded Data")
     # Allow training if we have any data
