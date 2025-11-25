@@ -25,9 +25,17 @@ def initialize_database():
             type TEXT NOT NULL,
             upload_date TEXT NOT NULL,
             status TEXT NOT NULL,
-            path TEXT NOT NULL
+            path TEXT NOT NULL,
+            mineral TEXT
         )
     ''')
+
+    # Add mineral column if it doesn't exist (for existing databases)
+    try:
+        cursor.execute("ALTER TABLE files ADD COLUMN mineral TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
 
     # Create models table
     cursor.execute('''
@@ -35,9 +43,17 @@ def initialize_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             version TEXT NOT NULL,
             performance_metrics TEXT,
-            created_date TEXT NOT NULL
+            created_date TEXT NOT NULL,
+            mineral TEXT
         )
     ''')
+
+    # Add mineral column if it doesn't exist (for existing databases)
+    try:
+        cursor.execute("ALTER TABLE models ADD COLUMN mineral TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
 
     # Create alerts table
     cursor.execute('''
@@ -75,15 +91,28 @@ def initialize_database():
     conn.commit()
     conn.close()
 
-def insert_file(filename, file_type, status, path):
+def insert_file(filename, file_type, status, path, mineral=None):
     """Insert a new file record into the database."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     upload_date = datetime.datetime.now().isoformat()
-    cursor.execute('''
-        INSERT INTO files (filename, type, upload_date, status, path)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (filename, file_type, upload_date, status, path))
+
+    # Check if mineral column exists
+    cursor.execute("PRAGMA table_info(files)")
+    columns = [col[1] for col in cursor.fetchall()]
+    has_mineral = 'mineral' in columns
+
+    if has_mineral:
+        cursor.execute('''
+            INSERT INTO files (filename, type, upload_date, status, path, mineral)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (filename, file_type, upload_date, status, path, mineral))
+    else:
+        cursor.execute('''
+            INSERT INTO files (filename, type, upload_date, status, path)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (filename, file_type, upload_date, status, path))
+
     conn.commit()
     conn.close()
 
@@ -96,6 +125,18 @@ def get_files():
     conn.close()
     return rows
 
+def get_files_by_mineral(mineral=None):
+    """Retrieve file records filtered by mineral. If mineral is None, return all."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    if mineral:
+        cursor.execute('SELECT * FROM files WHERE mineral = ?', (mineral,))
+    else:
+        cursor.execute('SELECT * FROM files')
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
 def update_file_status(file_id, status):
     """Update the status of a file."""
     conn = sqlite3.connect(DB_PATH)
@@ -104,16 +145,16 @@ def update_file_status(file_id, status):
     conn.commit()
     conn.close()
 
-def insert_model(version, performance_metrics):
+def insert_model(version, performance_metrics, mineral=None):
     """Insert a new model record into the database."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     created_date = datetime.datetime.now().isoformat()
     metrics_json = json.dumps(performance_metrics) if performance_metrics else None
     cursor.execute('''
-        INSERT INTO models (version, performance_metrics, created_date)
-        VALUES (?, ?, ?)
-    ''', (version, metrics_json, created_date))
+        INSERT INTO models (version, performance_metrics, created_date, mineral)
+        VALUES (?, ?, ?, ?)
+    ''', (version, metrics_json, created_date, mineral))
     conn.commit()
     conn.close()
 
@@ -125,6 +166,27 @@ def get_models():
     rows = cursor.fetchall()
     conn.close()
     return rows
+
+def get_models_by_mineral(mineral=None):
+    """Retrieve model records filtered by mineral. If mineral is None, return all."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    if mineral:
+        cursor.execute('SELECT * FROM models WHERE mineral = ?', (mineral,))
+    else:
+        cursor.execute('SELECT * FROM models')
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def get_unique_minerals():
+    """Get list of unique minerals from models table."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT DISTINCT mineral FROM models WHERE mineral IS NOT NULL')
+    rows = cursor.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
 
 def insert_alert(alert_type, message, severity):
     """Insert a new alert record."""
@@ -197,7 +259,7 @@ def get_training_runs():
     conn.close()
     return rows
 
-def save_geoparquet(data, filename, directory='data/features/'):
+def save_geoparquet(data, filename, directory='data/features/', mineral=None):
     """Save a GeoDataFrame or DataFrame to GeoParquet format in the specified directory."""
     path = os.path.join(directory, filename)
     if isinstance(data, pd.DataFrame):
@@ -211,7 +273,7 @@ def save_geoparquet(data, filename, directory='data/features/'):
     else:
         data.to_parquet(path)
     # Insert into database
-    insert_file(filename, 'geoparquet', 'uploaded', path)
+    insert_file(filename, 'geoparquet', 'uploaded', path, mineral)
 
 def load_geoparquet(filename, directory='data/features/'):
     """Load a GeoDataFrame from GeoParquet, GeoJSON, or CSV format."""
@@ -240,7 +302,7 @@ def validate_crs(gdf, expected_crs='EPSG:4326'):
         raise ValueError(f"CRS mismatch: expected {expected_crs}, got {gdf.crs}")
     return True
 
-def save_deposit_data(data, filename, directory='data/deposits/'):
+def save_deposit_data(data, filename, directory='data/deposits/', mineral=None):
     """Save deposit data to the deposits directory."""
     path = os.path.join(directory, filename)
     if isinstance(data, pd.DataFrame):
@@ -257,16 +319,17 @@ def save_deposit_data(data, filename, directory='data/deposits/'):
             data.to_csv(path, index=False)
     else:
         data.to_file(path, driver='GeoJSON')
-    insert_file(filename, 'deposit', 'uploaded', path)
+    insert_file(filename, 'deposit', 'uploaded', path, mineral)
 
-def save_prediction_data(data, filename, directory='data/predictions/'):
+def save_prediction_data(data, filename, directory='data/predictions/', mineral=None):
     """Save prediction data to the predictions directory."""
     path = os.path.join(directory, filename)
     if isinstance(data, gpd.GeoDataFrame):
         data.to_file(path, driver='ESRI Shapefile')
     elif isinstance(data, pd.DataFrame):
         data.to_parquet(path)
-    insert_file(filename, 'prediction', 'uploaded', path)
+    insert_file(filename, 'prediction', 'uploaded', path, mineral)
+    return path
 
 # Initialize the database when the module is imported
 initialize_database()

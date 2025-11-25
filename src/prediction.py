@@ -131,7 +131,7 @@ def export_to_shapefile(predictions_gdf, output_path):
     """Export predictions to shapefile."""
     predictions_gdf.to_file(output_path, driver='ESRI Shapefile')
 
-def run_prediction_pipeline(prediction_area_path, model_version, threshold=0.5, output_filename=None, base_features_file='features.parquet'):
+def run_prediction_pipeline(prediction_area_path, model_version, threshold=0.5, output_filename=None, base_features_file='features.parquet', mineral=None):
     """Main prediction pipeline."""
     # Determine file type from path
     if prediction_area_path.endswith('.csv'):
@@ -172,7 +172,7 @@ def run_prediction_pipeline(prediction_area_path, model_version, threshold=0.5, 
     export_to_shapefile(prediction_gdf, output_path)
 
     # Save to data architecture
-    save_prediction_data(prediction_gdf, output_filename)
+    save_prediction_data(prediction_gdf, output_filename, mineral=mineral)
 
     return output_filename, prediction_gdf
 

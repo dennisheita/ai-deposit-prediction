@@ -104,7 +104,7 @@ def log_metrics(metrics, log_path=os.path.join(LOGS_DIR, 'training.log')):
     """
     logging.info(f"Training metrics: {metrics}")
 
-def run_training_pipeline(features_file, deposits_file, n_negatives_per_positive=1, param_grid=None, k=10, top_percent=0.1):
+def run_training_pipeline(features_file, deposits_file, mineral=None, n_negatives_per_positive=1, param_grid=None, k=10, top_percent=0.1):
     """
     Main training pipeline with monitoring.
     """
@@ -199,7 +199,7 @@ def run_training_pipeline(features_file, deposits_file, n_negatives_per_positive
         log_metrics(metrics)
 
         # Update metadata
-        insert_model(version, metrics)
+        insert_model(version, metrics, mineral)
 
         logging.info(f"Training completed. Best model saved at {model_path} with AUC {best_score}")
         return f"Training completed. Best model saved at {model_path} with AUC {best_score}"

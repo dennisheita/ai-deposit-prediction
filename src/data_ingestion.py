@@ -27,7 +27,7 @@ def validate_file_integrity(file_path, file_type):
         if not file_path.endswith('.csv'):
             raise ValueError(f"Invalid CSV file: {file_path}")
 
-def process_shapefile(file_path, data_type='features'):
+def process_shapefile(file_path, data_type='features', mineral=None):
     """Process a shapefile: unzip if needed, validate, convert to GeoParquet, save."""
     try:
         # Determine if zipped
@@ -63,18 +63,18 @@ def process_shapefile(file_path, data_type='features'):
         if data_type == 'deposits':
             filename = os.path.basename(shp_path).replace('.shp', '.geojson')
             directory = 'data/deposits/'
-            save_deposit_data(gdf, filename, directory)
+            save_deposit_data(gdf, filename, directory, mineral)
         else:
             filename = os.path.basename(shp_path).replace('.shp', '.parquet')
             directory = 'data/features/'
-            save_geoparquet(gdf, filename, directory)
+            save_geoparquet(gdf, filename, directory, mineral)
 
         return f"Successfully processed shapefile: {filename}"
 
     except Exception as e:
         return f"Error processing shapefile {file_path}: {str(e)}"
 
-def process_csv(file_path, data_type='deposits'):
+def process_csv(file_path, data_type='deposits', mineral=None):
     """Process a CSV file: read, save to appropriate directory."""
     try:
         validate_file_integrity(file_path, 'csv')
@@ -90,11 +90,11 @@ def process_csv(file_path, data_type='deposits'):
         if data_type == 'features':
             # For features, we might save as parquet if it has geometry, or keep as CSV/parquet if not
             # save_geoparquet handles the logic of checking for lat/lon
-            save_geoparquet(df, filename.replace('.csv', '.parquet'), 'data/features/')
+            save_geoparquet(df, filename.replace('.csv', '.parquet'), 'data/features/', mineral)
         else:
             # For deposits, save_deposit_data handles checking for lat/lon
             # If it's a CSV without lat/lon, it will be saved as CSV
-            save_deposit_data(df, filename, 'data/deposits/')
+            save_deposit_data(df, filename, 'data/deposits/', mineral)
 
         return f"Successfully processed CSV: {filename}"
 
@@ -119,15 +119,15 @@ def detect_data_type(file_path):
         else:
             return 'features'
 
-def ingest_files(file_list):
+def ingest_files(file_list, mineral=None):
     """Ingest a list of files, auto-detecting type and processing accordingly."""
     results = []
     for file_path in file_list:
         data_type = detect_data_type(file_path)
         if file_path.endswith('.shp') or file_path.endswith('.zip'):
-            result = process_shapefile(file_path, data_type)
+            result = process_shapefile(file_path, data_type, mineral)
         elif file_path.endswith('.csv'):
-            result = process_csv(file_path, data_type)
+            result = process_csv(file_path, data_type, mineral)
         else:
             result = f"Unsupported file type: {file_path}"
         results.append(result)

@@ -6,13 +6,16 @@ import joblib
 import os
 import sys
 
-# Get n_estimators from command line argument, default to 100
+# Get n_estimators and mineral from command line arguments
 n_estimators = 100
+mineral = None
 if len(sys.argv) > 1:
     try:
         n_estimators = int(sys.argv[1])
     except ValueError:
         pass
+if len(sys.argv) > 2:
+    mineral = sys.argv[2]
 
 # Load data
 data_dir = 'ml_data copy'
@@ -75,8 +78,8 @@ metrics = {
 from src.data_architecture import insert_model
 import datetime
 version = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-insert_model(version, metrics)
-print(f"Model inserted into database with version {version}")
+insert_model(version, metrics, mineral)
+print(f"Model inserted into database with version {version} for mineral {mineral}")
 
 # Feature importances
 importances = rf.feature_importances_

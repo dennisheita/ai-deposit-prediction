@@ -16,7 +16,7 @@ import threading
 import time
 
 # Import modules
-from src.data_architecture import get_files, get_models, load_geoparquet, save_prediction_data
+from src.data_architecture import get_files, get_models, get_models_by_mineral, get_unique_minerals, get_files_by_mineral, load_geoparquet, save_prediction_data
 from src.data_ingestion import ingest_files
 from src.feature_engineering import FeatureEngineer
 from src.training_pipeline import run_training_pipeline
@@ -32,7 +32,21 @@ os.makedirs('data/deposits', exist_ok=True)
 os.makedirs('data/predictions', exist_ok=True)
 os.makedirs('models', exist_ok=True)
 
-# Sidebar navigation
+# Sidebar mineral selection and navigation
+st.sidebar.title("AI Deposit Prediction System")
+
+# Always include the default minerals
+default_minerals = ["Copper", "Diamonds", "Gold", "Lead", "REE (Rare Earth Elements)", "Tin", "Uranium"]
+
+# Get any additional minerals from the database
+db_minerals = get_unique_minerals()
+
+# Combine and deduplicate
+minerals = list(set(default_minerals + db_minerals))
+minerals.sort()  # Sort alphabetically
+minerals.insert(0, "All Minerals")  # Add option to view all
+selected_mineral = st.sidebar.selectbox("Select Mineral Category", minerals, key="mineral_selector")
+
 st.sidebar.title("Navigation")
 page = st.sidebar.selectbox("Choose a section", [
     "Data Upload",
@@ -48,7 +62,7 @@ page = st.sidebar.selectbox("Choose a section", [
 
 # Data Upload Section
 if page == "Data Upload":
-    st.title("Data Upload")
+    st.title(f"Data Upload - {selected_mineral}")
     st.write("Upload shapefiles or CSV files. The system will automatically detect if they are features or deposits data.")
 
     uploaded_files = st.file_uploader("Choose files", accept_multiple_files=True, type=['shp', 'zip', 'csv'])
@@ -65,7 +79,7 @@ if page == "Data Upload":
                     file_paths.append(tmp.name)
                 progress_bar.progress((i+1) / len(uploaded_files))
 
-            results = ingest_files(file_paths)
+            results = ingest_files(file_paths, mineral=selected_mineral)
             status_text.text("Processing complete!")
             st.write("Results:")
             for result in results:
@@ -85,7 +99,7 @@ if page == "Data Upload":
                         deposits_file = deposits_options[-1]  # Last uploaded
 
                         try:
-                            result = run_training_pipeline(features_file, deposits_file)
+                            result = run_training_pipeline(features_file, deposits_file, mineral=training_mineral)
                             st.success(f"✅ Model retrained successfully! {result}")
                         except Exception as e:
                             st.warning(f"⚠️ Retraining failed: {str(e)}. You can manually retrain in the Training section.")
@@ -98,8 +112,8 @@ if page == "Data Upload":
 
 # Training Section
 elif page == "Training":
-    st.title("Training Controls")
-    st.write("Start training runs for deposit prediction models.")
+    st.title(f"Training Controls - {selected_mineral}")
+    st.write(f"Start training runs for {selected_mineral} deposit prediction models.")
 
     # Continuous Learning Mode
     st.subheader("🚀 Continuous Learning Mode")
@@ -115,9 +129,20 @@ elif page == "Training":
         st.write("3. New model replaces the old one")
         st.write("4. Check Statistics Dashboard for updated performance")
 
+    # Mineral for this training run
+    if selected_mineral == "All Minerals":
+        training_mineral = st.selectbox("Select mineral for this training run", minerals[1:], key="training_mineral")  # Exclude "All Minerals"
+    else:
+        training_mineral = selected_mineral
+        st.write(f"Training model for: **{training_mineral}**")
+
     # Get all available files that could be used for training
-    features_options = [f[1] for f in get_files() if f[3] == 'geoparquet']
-    deposits_options = [f[1] for f in get_files() if f[3] == 'deposit']
+    if selected_mineral == "All Minerals":
+        all_files = get_files()
+    else:
+        all_files = get_files_by_mineral(selected_mineral)
+    features_options = [f[1] for f in all_files if f[3] == 'geoparquet']
+    deposits_options = [f[1] for f in all_files if f[3] == 'deposit']
 
     # Combine options for the main training file selection
     all_training_options = list(set(deposits_options + features_options))
@@ -154,9 +179,9 @@ elif page == "Training":
 
             st.write(f"🏃 Running training iteration #{training_count}...")
 
-            # Run the train_model.py script
+            # Run the train_model.py script with mineral parameter
             import subprocess
-            result = subprocess.run(['python3', 'train_model.py'], capture_output=True, text=True, cwd='.')
+            result = subprocess.run(['python3', 'train_model.py', str(100), training_mineral], capture_output=True, text=True, cwd='.')
 
             if result.returncode == 0:
                 st.success(f"✅ Training iteration #{training_count} completed successfully!")
@@ -195,7 +220,7 @@ elif page == "Training":
             with st.spinner("Training on existing data..."):
                 # Run the train_model.py script
                 import subprocess
-                result = subprocess.run(['python3', 'train_model.py'], capture_output=True, text=True, cwd='.')
+                result = subprocess.run(['python3', 'train_model.py', '100', training_mineral], capture_output=True, text=True, cwd='.')
                 if result.returncode == 0:
                     st.success("Model trained successfully on existing data!")
                     st.text("Output:")
@@ -229,7 +254,7 @@ elif page == "Training":
                 # If features_file is None, pass deposits_file as features_file too
                 feat_file_to_pass = features_file if features_file else deposits_file
 
-                result = run_training_pipeline(feat_file_to_pass, deposits_file)
+                result = run_training_pipeline(feat_file_to_pass, deposits_file, mineral=training_mineral)
             st.success(result)
 
             # Display progress (simplified, as real-time is complex in Streamlit)
@@ -237,7 +262,7 @@ elif page == "Training":
 
 # Statistics Dashboard
 elif page == "Statistics Dashboard":
-    st.title("Statistics Dashboard")
+    st.title(f"Statistics Dashboard - {selected_mineral}")
 
     # Alerts
     alerts = get_active_alerts()
@@ -251,11 +276,14 @@ elif page == "Statistics Dashboard":
                 resolve_alert(alert[0])
                 st.rerun()
 
-    models = get_models()
-    st.write(f"Total Training Runs: {len(models)}")
+    if selected_mineral == "All Minerals":
+        models = get_models()
+    else:
+        models = get_models_by_mineral(selected_mineral)
+    st.write(f"Total Training Runs for {selected_mineral}: {len(models)}")
 
     if models:
-        df = pd.DataFrame(models, columns=['id', 'version', 'performance_metrics', 'created_date'])
+        df = pd.DataFrame(models, columns=['id', 'version', 'performance_metrics', 'created_date', 'mineral'])
         df['performance_metrics'] = df['performance_metrics'].apply(lambda x: json.loads(x) if x else {})
         st.dataframe(df)
 
@@ -297,7 +325,7 @@ elif page == "Statistics Dashboard":
 
 # Prediction Section
 elif page == "Prediction":
-    st.title("Prediction Interface")
+    st.title(f"Prediction Interface - {selected_mineral}")
     st.write("Upload prediction data with the same features as training (CSV format) or shapefiles/GeoJSON for spatial areas.")
 
     # Conversion tool
@@ -347,7 +375,11 @@ elif page == "Prediction":
 
     st.subheader("Run Prediction")
     prediction_file = st.file_uploader("Upload prediction data (CSV, shapefile, or GeoJSON)", type=['csv', 'shp', 'zip', 'geojson'])
-    model_version = st.selectbox("Select model", [m[1] for m in get_models()])
+    if selected_mineral == "All Minerals":
+        available_models = get_models()
+    else:
+        available_models = get_models_by_mineral(selected_mineral)
+    model_version = st.selectbox("Select model", [m[1] for m in available_models])
     threshold = st.slider("Prediction threshold", 0.0, 1.0, 0.5, 0.01)
 
     if st.button("Run Prediction") and prediction_file and model_version:
@@ -386,9 +418,18 @@ elif page == "Prediction":
 
             if prediction_area_path:
                 try:
-                    output_filename, pred_gdf = run_prediction_pipeline(prediction_area_path, model_version, threshold)
+                    output_filename, pred_gdf = run_prediction_pipeline(prediction_area_path, model_version, threshold, mineral=selected_mineral)
                     st.success(f"Prediction completed and saved as {output_filename}")
                     st.write(f"Generated {len(pred_gdf)} predictions")
+
+                    # Store prediction results in session state for persistent visualization
+                    st.session_state[f'prediction_{selected_mineral}'] = {
+                        'filename': output_filename,
+                        'timestamp': pd.Timestamp.now().isoformat(),
+                        'mineral': selected_mineral
+                    }
+
+                    st.success("✅ Prediction completed! Results stored for visualization below.")
 
                     # Provide download link for the shapefile
                     shapefile_path = f"data/predictions/{output_filename}"
@@ -409,8 +450,75 @@ elif page == "Prediction":
                                 file_name=f"{output_filename.replace('.shp', '.zip')}",
                                 mime="application/zip"
                             )
+
                 except Exception as e:
                     st.error(f"Prediction failed: {str(e)}")
+
+    # Persistent prediction visualization section (outside the button callback)
+    prediction_key = f'prediction_{selected_mineral}'
+    if prediction_key in st.session_state:
+        pred_data = st.session_state[prediction_key]
+        st.subheader("📊 Latest Prediction Results Visualization")
+
+        try:
+            # Load the saved shapefile for visualization
+            shapefile_path = f"data/predictions/{pred_data['filename']}"
+            if os.path.exists(shapefile_path):
+                pred_viz_gdf = gpd.read_file(shapefile_path)
+
+                # Create map centered on predictions
+                center_lat = pred_viz_gdf.geometry.centroid.y.mean()
+                center_lon = pred_viz_gdf.geometry.centroid.x.mean()
+                m = folium.Map(location=[center_lat, center_lon], zoom_start=10)
+
+                # Get correct column names (shapefiles truncate to 10 chars)
+                prob_col = 'probabilit' if 'probabilit' in pred_viz_gdf.columns else 'probability'
+                pred_col = 'predictio' if 'predictio' in pred_viz_gdf.columns else 'prediction'
+                conf_col = 'confidenc' if 'confidenc' in pred_viz_gdf.columns else 'confidence'
+
+                # Add heatmap if probability column exists
+                if prob_col in pred_viz_gdf.columns:
+                    heat_data = [[row.geometry.y, row.geometry.x, row[prob_col]] for idx, row in pred_viz_gdf.iterrows()]
+                    HeatMap(heat_data, name="Deposit Probability Heatmap", radius=15).add_to(m)
+
+                # Add prediction points
+                if pred_col in pred_viz_gdf.columns:
+                    for idx, row in pred_viz_gdf.iterrows():
+                        color = 'red' if row[pred_col] == 1 else 'blue'
+                        popup_text = f"Probability: {row.get(prob_col, 'N/A'):.2f}<br>Prediction: {'Deposit' if row[pred_col] == 1 else 'No Deposit'}"
+                        if conf_col in pred_viz_gdf.columns:
+                            popup_text += f"<br>Confidence: {row.get(conf_col, 'N/A'):.2f}"
+
+                        folium.CircleMarker(
+                            location=[row.geometry.y, row.geometry.x],
+                            radius=6,
+                            color=color,
+                            fill=True,
+                            fill_color=color,
+                            popup=popup_text,
+                            fill_opacity=0.7
+                        ).add_to(m)
+
+                # Add layer control
+                folium.LayerControl().add_to(m)
+
+                st.info("🗺️ **Map Legend:** Red = Predicted Deposit, Blue = No Deposit, Heatmap = Probability Distribution")
+                st.write(f"**Prediction:** {pred_data['filename']} | **Generated:** {pd.Timestamp(pred_data['timestamp']).strftime('%Y-%m-%d %H:%M:%S')}")
+
+                # Clear prediction button
+                if st.button("Clear Prediction Results", key="clear_prediction"):
+                    del st.session_state[prediction_key]
+                    st.rerun()
+
+                st_folium(m, width=700, height=500)
+
+            else:
+                st.warning("Prediction shapefile not found - it may have been deleted")
+                del st.session_state[prediction_key]
+        except Exception as e:
+            st.warning(f"Could not load prediction visualization: {str(e)}")
+            if st.button("Clear Failed Prediction", key="clear_failed"):
+                del st.session_state[prediction_key]
 
             # Clean up
             if 'zip_path' in locals():
@@ -423,20 +531,86 @@ elif page == "Prediction":
 
 # Map Visualization
 elif page == "Map Visualization":
-    st.title("Map Visualization")
+    st.title(f"Map Visualization - {selected_mineral}")
     st.write("Interactive deposit probability heatmaps with overlays.")
 
-    # Get prediction files from database
-    prediction_files_db = [f[1] for f in get_files() if f[3] == 'prediction']
+    # Direct shapefile upload for visualization
+    st.subheader("Direct Shapefile Visualization")
+    st.write("Upload any shapefile to visualize it directly on the map.")
+    direct_shapefile = st.file_uploader("Upload shapefile (.zip containing .shp, .shx, .dbf, .prj)",
+                                       type=['zip'], key='direct_map_shapefile')
 
-    # Also check for shapefiles in the predictions directory
-    import glob
-    prediction_dir = 'data/predictions/'
-    shapefiles = glob.glob(os.path.join(prediction_dir, '*.shp'))
-    prediction_files_dir = [os.path.basename(f).replace('.shp', '') for f in shapefiles]
+    if direct_shapefile:
+        with st.spinner("Processing shapefile..."):
+            # Save uploaded zip temporarily
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+                tmp.write(direct_shapefile.read())
+                zip_path = tmp.name
 
-    # Combine and deduplicate
-    prediction_files = list(set(prediction_files_db + prediction_files_dir))
+            # Extract shapefile
+            extract_dir = tempfile.mkdtemp()
+            import zipfile
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+
+            # Find shapefile
+            shp_path = None
+            for file in os.listdir(extract_dir):
+                if file.endswith('.shp'):
+                    shp_path = os.path.join(extract_dir, file)
+                    break
+
+            if shp_path:
+                try:
+                    # Load and display shapefile
+                    direct_gdf = gpd.read_file(shp_path)
+
+                    # Create map centered on the shapefile
+                    center_lat = direct_gdf.geometry.centroid.y.mean()
+                    center_lon = direct_gdf.geometry.centroid.x.mean()
+                    m = folium.Map(location=[center_lat, center_lon], zoom_start=10)
+
+                    # Add the shapefile to map
+                    folium.GeoJson(direct_gdf.to_json(), name="Uploaded Shapefile").add_to(m)
+
+                    # Add layer control
+                    folium.LayerControl().add_to(m)
+
+                    st.success(f"Loaded shapefile with {len(direct_gdf)} features")
+                    st_folium(m, width=700, height=500)
+
+                except Exception as e:
+                    st.error(f"Error loading shapefile: {str(e)}")
+            else:
+                st.error("No .shp file found in the uploaded zip")
+
+            # Cleanup
+            os.unlink(zip_path)
+            import shutil
+            shutil.rmtree(extract_dir)
+
+    # Debug: Show current mineral selection
+    st.write(f"**Current mineral:** {selected_mineral}")
+
+    # Get prediction files from database (only database entries, since directory files aren't mineral-tagged)
+    if selected_mineral == "All Minerals":
+        all_files = get_files()
+        st.write("**Mode:** All Minerals - showing all prediction files")
+    else:
+        all_files = get_files_by_mineral(selected_mineral)
+        st.write(f"**Mode:** Mineral-specific - filtering for {selected_mineral}")
+
+    # Debug: Show all prediction files found
+    prediction_files_all = [f for f in all_files if f[3] == 'prediction']
+    st.write(f"**Found {len(prediction_files_all)} prediction files in database**")
+
+    if prediction_files_all:
+        for f in prediction_files_all[:5]:  # Show first 5
+            st.write(f"  📄 {f[1]} (mineral: {f[6] or 'None'}, type: {f[3]})")
+    else:
+        st.warning("No prediction files found in database for current mineral")
+
+    prediction_files = [f[1].replace('.shp', '') for f in prediction_files_all]
 
     if not prediction_files:
         st.warning("No prediction files available. Please run a prediction first.")
@@ -452,13 +626,17 @@ elif page == "Map Visualization":
     overlay_deposits = st.checkbox("Overlay Known Deposits", value=False)
 
     if selected_pred:
-        # Try with .shp extension first
+        # Try with .shp extension (since we stripped it from display names)
         shp_path = f"data/predictions/{selected_pred}.shp"
         if os.path.exists(shp_path):
             pred_gdf = gpd.read_file(shp_path)
         else:
-            # Try without extension (might be a different format)
-            pred_gdf = gpd.read_file(f"data/predictions/{selected_pred}")
+            # Try without extension as fallback
+            try:
+                pred_gdf = gpd.read_file(f"data/predictions/{selected_pred}")
+            except:
+                st.error(f"Could not find prediction file: {selected_pred}.shp")
+                st.stop()
 
         # Create Folium map
         center_lat = pred_gdf.geometry.centroid.y.mean()
@@ -537,7 +715,7 @@ elif page == "Map Visualization":
 
 # Batch Processing
 elif page == "Batch Processing":
-    st.title("Batch Processing")
+    st.title(f"Batch Processing - {selected_mineral}")
     st.write("Run multiple training jobs with different hyperparameters to find the best model configuration.")
 
     st.subheader("What are Hyperparameters?")
@@ -620,7 +798,7 @@ elif page == "Batch Processing":
                     param_desc = f"n_est={params['n_estimators'][0]}, depth={params['max_depth'][0] or 'None'}, split={params['min_samples_split'][0]}, leaf={params['min_samples_leaf'][0]}"
                     status_text.text(f"Training model {i+1}/{len(param_combinations)}: {param_desc}")
                     try:
-                        result = run_training_pipeline(features_file, deposits_file, param_grid=params)
+                        result = run_training_pipeline(features_file, deposits_file, mineral=training_mineral, param_grid=params)
                         # Extract AUC from result string
                         auc_match = result.split('AUC ') if 'AUC ' in result else ['N/A']
                         auc = auc_match[-1].split()[0] if len(auc_match) > 1 else 'N/A'
@@ -646,11 +824,18 @@ elif page == "Batch Processing":
 
 # Model Comparison
 elif page == "Model Comparison":
-    st.title("Model Comparison")
+    st.title(f"Model Comparison - {selected_mineral}")
 
-    models = get_models()
-    model1 = st.selectbox("Select Model 1", [m[1] for m in models])
-    model2 = st.selectbox("Select Model 2", [m[1] for m in models if m[1] != model1])
+    if selected_mineral == "All Minerals":
+        models = get_models()
+    else:
+        models = get_models_by_mineral(selected_mineral)
+
+    if not models:
+        st.warning(f"No models available for {selected_mineral}")
+    else:
+        model1 = st.selectbox("Select Model 1", [m[1] for m in models])
+        model2 = st.selectbox("Select Model 2", [m[1] for m in models if m[1] != model1])
 
     if model1 and model2:
         m1_data = next(m for m in models if m[1] == model1)
@@ -672,10 +857,13 @@ elif page == "Model Comparison":
 
 # Download Center
 elif page == "Download Center":
-    st.title("Download Center")
+    st.title(f"Download Center - {selected_mineral}")
 
-    files = get_files()
-    df = pd.DataFrame(files, columns=['id', 'filename', 'type', 'upload_date', 'status', 'path'])
+    if selected_mineral == "All Minerals":
+        files = get_files()
+    else:
+        files = get_files_by_mineral(selected_mineral)
+    df = pd.DataFrame(files, columns=['id', 'filename', 'type', 'upload_date', 'status', 'path', 'mineral'])
     st.dataframe(df)
 
     selected_file = st.selectbox("Select file to download", df['filename'].tolist())
@@ -691,8 +879,30 @@ elif page == "Download Center":
 
 # Data Management Section
 elif page == "Data Management":
-    st.title("Data Management")
+    st.title(f"Data Management - {selected_mineral}")
     st.write("Manage uploaded datasets, models, and system data.")
+
+    st.subheader("Database Reset")
+    st.warning("🔄 **Database Schema Issue Detected**: The database needs to be reset to add mineral support. This will delete all data but fix the mineral tagging system.")
+    if st.button("Reset Database (Fix Mineral Support)", type="primary"):
+        with st.spinner("Resetting database..."):
+            import os
+            import sqlite3
+
+            # Delete existing database
+            db_path = 'data/metadata.db'
+            if os.path.exists(db_path):
+                os.remove(db_path)
+                st.success("Database deleted")
+
+            # Recreate database with new schema
+            from src.data_architecture import initialize_database
+            initialize_database()
+            st.success("Database recreated with mineral support")
+
+            # Clear any cached data
+            st.cache_data.clear()
+            st.rerun()
 
     st.subheader("Delete All Datasets")
     st.warning("⚠️ This will permanently delete all uploaded files, trained models, predictions, and database records. This action cannot be undone.")
