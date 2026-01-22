@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Run Prediction</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .container { max-width: 800px; margin: auto; }
+        h1 { color: #333; }
+        form { margin-top: 20px; }
+        input, select { display: block; margin-bottom: 10px; padding: 8px; width: 100%; }
+        button { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; cursor: pointer; }
+        button:hover { background-color: #45a049; }
+        .flash { color: red; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Run Prediction</h1>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <ul class="flash">
+                    {% for message in messages %}
+                        <li>{{ message }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        {% endwith %}
+
+        <form action="/predict" method="post" enctype="multipart/form-data">
+            <label for="file">Upload Prediction Data (CSV, Shapefile, GeoJSON):</label>
+            <input type="file" name="file" accept=".csv,.shp,.zip,.geojson" required>
+
+            <label for="mineral">Mineral Category:</label>
+            <select name="mineral">
+                <option value="All Minerals">All Minerals</option>
+                {% for mineral in minerals %}
+                    <option value="{{ mineral }}">{{ mineral }}</option>
+                {% endfor %}
+            </select>
+
+            <label for="threshold">Prediction Threshold (0.0 - 1.0):</label>
+            <input type="number" name="threshold" min="0.0" max="1.0" step="0.01" value="0.5" required>
+
+            <button type="submit">Run Prediction</button>
+        </form>
+
+        <a href="/">Back to Home</a>
+    </div>
+</body>
+</html>

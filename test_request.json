@@ -1,0 +1,8 @@
+{
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [[[15.0, -22.0], [15.1, -22.0], [15.1, -22.1], [15.0, -22.1], [15.0, -22.0]]]
+  },
+  "mineral": "All Minerals",
+  "threshold": 0.5
+}

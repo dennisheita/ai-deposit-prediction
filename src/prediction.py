@@ -215,3 +215,119 @@ def convert_spatial_to_csv(input_path, output_path=None):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     df.to_csv(output_path, index=False)
     return output_path
+
+def sample_polygon_to_points(polygon_gdf, spacing=0.0003):
+    """
+    Sample a polygon into a grid of points for prediction.
+    
+    Args:
+        polygon_gdf: GeoDataFrame containing the polygon to sample
+        spacing: Distance between points in degrees (approximately 30m at equator)
+    
+    Returns:
+        GeoDataFrame with points inside the polygon
+    """
+    min_x, min_y, max_x, max_y = polygon_gdf.total_bounds
+    
+    x_coords = np.arange(min_x, max_x, spacing)
+    y_coords = np.arange(min_y, max_y, spacing)
+    
+    points = []
+    for x in x_coords:
+        for y in y_coords:
+            point = Point(x, y)
+            points.append(point)
+    
+    points_gdf = gpd.GeoDataFrame(
+        geometry=points,
+        crs=polygon_gdf.crs
+    )
+    
+    within_points = points_gdf[points_gdf.within(polygon_gdf.geometry.iloc[0])]
+    
+    return within_points
+
+def extract_features_from_points(points_gdf):
+    """
+    Extract features for each point using DEM, slope, aspect, and geology data.
+    """
+    grid_path = 'data/grid_with_all_features - grid_with_all_features.csv'
+    if not os.path.exists(grid_path):
+        raise FileNotFoundError(f"Grid file not found: {grid_path}")
+    
+    min_x, min_y, max_x, max_y = points_gdf.total_bounds
+    buffer = 0.1
+    
+    grid_df = pd.read_csv(grid_path, usecols=['latitude', 'longitude', 'elevation_m', 'slope_deg', 'aspect_deg', 'elevation_code'])
+    grid_df = grid_df[
+        (grid_df['longitude'] >= min_x - buffer) & 
+        (grid_df['longitude'] <= max_x + buffer) & 
+        (grid_df['latitude'] >= min_y - buffer) & 
+        (grid_df['latitude'] <= max_y + buffer)
+    ]
+    
+    if grid_df.empty:
+        raise ValueError("No grid data available in the prediction area")
+    
+    grid_gdf = gpd.GeoDataFrame(
+        grid_df,
+        geometry=gpd.points_from_xy(grid_df['longitude'], grid_df['latitude']),
+        crs='EPSG:4326'
+    )
+    
+    points_gdf['elevation'] = np.nan
+    points_gdf['slope'] = np.nan
+    points_gdf['aspect'] = np.nan
+    
+    geology_columns = [f'geology_code_{i}' for i in range(1, 29)] + ['geology_code_unknown']
+    for col in geology_columns:
+        points_gdf[col] = 0.0
+    
+    from scipy.spatial import cKDTree
+    
+    grid_coords = np.array([(point.x, point.y) for point in grid_gdf.geometry])
+    points_coords = np.array([(point.x, point.y) for point in points_gdf.geometry])
+    
+    tree = cKDTree(grid_coords)
+    distances, indices = tree.query(points_coords, k=1)
+    
+    for i, idx in enumerate(indices):
+        nearest_point = grid_gdf.iloc[idx]
+        points_gdf.at[i, 'elevation'] = nearest_point['elevation_m']
+        points_gdf.at[i, 'slope'] = nearest_point['slope_deg']
+        points_gdf.at[i, 'aspect'] = nearest_point['aspect_deg']
+        
+        elevation_code = nearest_point['elevation_code']
+        if 1 <= elevation_code <= 28:
+            points_gdf.at[i, f'geology_code_{elevation_code}'] = 1.0
+        else:
+            points_gdf.at[i, 'geology_code_unknown'] = 1.0
+    
+    return points_gdf
+
+def run_prediction_pipeline_from_geojson(polygon_gdf, model_version, threshold=0.5, output_filename=None, mineral=None):
+    """
+    Main prediction pipeline for GeoJSON polygons.
+    Handles: polygon sampling → feature extraction → encoding → prediction → aggregation
+    """
+    points_gdf = sample_polygon_to_points(polygon_gdf)
+    
+    if points_gdf.empty:
+        raise ValueError("Polygon is too small or invalid - no points were sampled")
+    
+    points_gdf = extract_features_from_points(points_gdf)
+    
+    model = load_model(model_version)
+    
+    points_gdf = generate_predictions(model, points_gdf)
+    
+    points_gdf = threshold_predictions(points_gdf, threshold)
+    
+    if output_filename is None:
+        output_filename = f"prediction_{model_version}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.shp"
+    output_path = f"data/predictions/{output_filename}"
+    export_to_shapefile(points_gdf, output_path)
+    
+    save_prediction_data(points_gdf, output_filename, mineral=mineral)
+    
+    return output_filename, points_gdf

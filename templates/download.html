@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Download Center</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .container { max-width: 1200px; margin: auto; }
+        h1 { color: #333; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        a { color: #4CAF50; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Download Center - {{ selected_mineral }}</h1>
+
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Filename</th>
+                <th>Type</th>
+                <th>Upload Date</th>
+                <th>Mineral</th>
+                <th>Download</th>
+            </tr>
+            {% for file in files %}
+                <tr>
+                    <td>{{ file[0] }}</td>
+                    <td>{{ file[1] }}</td>
+                    <td>{{ file[3] }}</td>
+                    <td>{{ file[4] }}</td>
+                    <td>{{ file[6] or 'N/A' }}</td>
+                    <td><a href="/download/{{ file[0] }}">Download</a></td>
+                </tr>
+            {% endfor %}
+        </table>
+
+        <a href="/">Home</a>
+    </div>
+</body>
+</html>

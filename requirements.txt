@@ -12,3 +12,12 @@ streamlit-folium
 joblib
 matplotlib
 psutil
+flask
+fastapi
+uvicorn
+python-multipart
+xgboost
+lightgbm
+optuna
+imbalanced-learn
+scipy

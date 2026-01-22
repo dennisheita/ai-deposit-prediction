@@ -36,7 +36,7 @@ os.makedirs('models', exist_ok=True)
 st.sidebar.title("AI Deposit Prediction System")
 
 # Always include the default minerals
-default_minerals = ["Copper", "Diamonds", "Gold", "Lead", "REE (Rare Earth Elements)", "Tin", "Uranium"]
+default_minerals = ["Copper", "Gold", "Uranium"]
 
 # Get any additional minerals from the database
 db_minerals = get_unique_minerals()
@@ -288,8 +288,24 @@ elif page == "Statistics Dashboard":
         st.dataframe(df)
 
         # Best metrics
-        best_model = max(models, key=lambda x: json.loads(x[2])['best_score'] if x[2] else 0)
-        st.write(f"Best Model: {best_model[1]}, Score: {json.loads(best_model[2])['best_score']}")
+        # Handle case where performance metrics might not have 'best_score' key
+        best_model = None
+        best_score = 0
+        
+        for model in models:
+            try:
+                if model[2]:
+                    metrics = json.loads(model[2])
+                    # Try to get score from various possible keys
+                    score = metrics.get('best_score', metrics.get('auc', metrics.get('accuracy', 0)))
+                    if score > best_score:
+                        best_score = score
+                        best_model = model
+            except (json.JSONDecodeError, KeyError, TypeError):
+                continue
+        
+        if best_model:
+            st.write(f"Best Model: {best_model[1]}, Score: {best_score:.4f}")
 
         # Performance report
         st.subheader("Performance Report")
@@ -566,8 +582,14 @@ elif page == "Map Visualization":
                     direct_gdf = gpd.read_file(shp_path)
 
                     # Create map centered on the shapefile
-                    center_lat = direct_gdf.geometry.centroid.y.mean()
-                    center_lon = direct_gdf.geometry.centroid.x.mean()
+                    # Reproject to a projected CRS for accurate centroid calculation
+                    # Use EPSG:3857 (Web Mercator) which is commonly used for mapping
+                    projected_gdf = direct_gdf.to_crs('EPSG:3857')
+                    center_lat = projected_gdf.geometry.centroid.y.mean()
+                    center_lon = projected_gdf.geometry.centroid.x.mean()
+                    # Convert back to geographic CRS for folium
+                    center = gpd.GeoSeries([Point(center_lon, center_lat)], crs='EPSG:3857').to_crs('EPSG:4326').iloc[0]
+                    center_lat, center_lon = center.y, center.x
                     m = folium.Map(location=[center_lat, center_lon], zoom_start=10)
 
                     # Add the shapefile to map

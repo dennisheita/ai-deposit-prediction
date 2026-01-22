@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Statistics Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .container { max-width: 1200px; margin: auto; }
+        h1, h2 { color: #333; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .alert { color: red; }
+        .report { white-space: pre-wrap; }
+        img { max-width: 100%; height: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Statistics Dashboard - {{ selected_mineral }}</h1>
+
+        {% if alerts %}
+            <h2>Active Alerts</h2>
+            <ul class="alert">
+                {% for alert in alerts %}
+                    <li>{{ alert[3] }}: {{ alert[2] }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <h2>Training Runs</h2>
+        <p>Total: {{ models|length }}</p>
+        {% if models %}
+            <table>
+                <tr>
+                    <th>ID</th>
+                    <th>Version</th>
+                    <th>Performance Metrics</th>
+                    <th>Created Date</th>
+                    <th>Mineral</th>
+                </tr>
+                {% for model in models %}
+                    <tr>
+                        <td>{{ model[0] }}</td>
+                        <td>{{ model[1] }}</td>
+                        <td>{{ model[2] }}</td>
+                        <td>{{ model[3] }}</td>
+                        <td>{{ model[4] }}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        {% endif %}
+
+        <h2>Performance Report</h2>
+        <div class="report">{{ report }}</div>
+
+        {% if trends_img %}
+            <h2>Performance Trends</h2>
+            <img src="data:image/png;base64,{{ trends_img }}" alt="Performance Trends">
+        {% endif %}
+
+        {% if fi_img %}
+            <h2>Feature Importance Evolution</h2>
+            <img src="data:image/png;base64,{{ fi_img }}" alt="Feature Importance Evolution">
+        {% endif %}
+
+        <a href="/">Home</a>
+    </div>
+</body>
+</html>

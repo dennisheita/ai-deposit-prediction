@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prediction Map</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .container { max-width: 1200px; margin: auto; }
+        h1 { color: #333; }
+        .map-container { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>All Predicted Deposits</h1>
+        <p>Map showing all predicted deposit locations with mineral information.</p>
+
+        <div class="map-container">
+            {{ map_html|safe }}
+        </div>
+
+        <p><strong>Legend:</strong> Red markers = Predicted Deposits</p>
+
+        <a href="/">Home</a>
+    </div>
+</body>
+</html>

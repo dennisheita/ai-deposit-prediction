@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Deposit Prediction - User Interface</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .container { max-width: 800px; margin: auto; }
+        h1 { color: #333; }
+        form { margin-top: 20px; }
+        input[type="file"] { margin-bottom: 10px; }
+        button { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; cursor: pointer; }
+        button:hover { background-color: #45a049; }
+        .flash { color: red; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Deposit Prediction System</h1>
+        <p>Welcome to the user interface for deposit prediction. Upload your data and run predictions.</p>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <ul class="flash">
+                    {% for message in messages %}
+                        <li>{{ message }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        {% endwith %}
+
+        <h2>Navigation</h2>
+        <ul>
+            <li><a href="/upload">Data Upload</a></li>
+            <li><a href="/predict">Prediction</a></li>
+            <li><a href="/map">Map Visualization</a></li>
+            <li><a href="/stats">Statistics Dashboard</a></li>
+            <li><a href="/compare">Model Comparison</a></li>
+            <li><a href="/download">Download Center</a></li>
+        </ul>
+
+        <h2>Quick Upload</h2>
+        <form action="/upload" method="post" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".shp,.zip,.csv,.geojson" required>
+            <button type="submit">Upload</button>
+        </form>
+    </div>
+</body>
+</html>
