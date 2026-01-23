@@ -153,22 +153,88 @@ async def predict(
     prob_col = 'probabilit' if 'probabilit' in pred_gdf.columns else 'probability'
     pred_col = 'predictio' if 'predictio' in pred_gdf.columns else 'prediction'
 
-    if prob_col in pred_gdf.columns:
-        heat_data = [[row.geometry.y, row.geometry.x, row[prob_col]] for idx, row in pred_gdf.iterrows()]
-        HeatMap(heat_data, radius=15).add_to(m)
+    # Helper function to get coordinates from any geometry type
+    def get_coords(geom):
+        if geom.geom_type == 'Point':
+            return geom.y, geom.x
+        else:
+            return geom.centroid.y, geom.centroid.x
 
+    # Load KNOWN DEPOSITS for comparison
+    def load_known_deposits(mineral_name):
+        """Load known deposit locations from training data."""
+        known_deposits = []
+        try:
+            if mineral_name in ['Gold', 'All Minerals']:
+                df = pd.read_csv('data/gold grid_with_all_features.csv')
+                gold_deps = df[df['gold_present'] == 1][['latitude', 'longitude']]
+                for _, row in gold_deps.iterrows():
+                    known_deposits.append({'lat': row['latitude'], 'lon': row['longitude'], 'mineral': 'Gold'})
+            
+            if mineral_name in ['Copper', 'All Minerals']:
+                df = pd.read_csv('data/copper_grid_with_features.csv')
+                copper_deps = df[df['copper_present'] == 1][['latitude', 'longitude']]
+                for _, row in copper_deps.iterrows():
+                    known_deposits.append({'lat': row['latitude'], 'lon': row['longitude'], 'mineral': 'Copper'})
+            
+            if mineral_name in ['Uranium', 'All Minerals']:
+                df = pd.read_csv('data/uranium_grid_with_features.csv')
+                uranium_deps = df[df['uranium_present'] == 1][['latitude', 'longitude']]
+                for _, row in uranium_deps.iterrows():
+                    known_deposits.append({'lat': row['latitude'], 'lon': row['longitude'], 'mineral': 'Uranium'})
+        except Exception as e:
+            print(f"Error loading known deposits: {e}")
+        return known_deposits
+
+    # Add KNOWN DEPOSITS to map (GREEN markers)
+    known_deposits = load_known_deposits(mineral)
+    known_group = folium.FeatureGroup(name='Known Deposits (Green)')
+    for dep in known_deposits:
+        folium.CircleMarker(
+            location=[dep['lat'], dep['lon']],
+            radius=6,
+            color='green',
+            fill=True,
+            fill_color='green',
+            popup=f"KNOWN DEPOSIT<br>Mineral: {dep['mineral']}",
+            fill_opacity=0.9
+        ).add_to(known_group)
+    known_group.add_to(m)
+    print(f"Added {len(known_deposits)} known {mineral} deposits to map (green)")
+
+    # Filter to only show DEPOSIT predictions (prediction = 1)
     if pred_col in pred_gdf.columns:
-        for idx, row in pred_gdf.iterrows():
-            color = 'red' if row[pred_col] == 1 else 'blue'
+        deposit_gdf = pred_gdf[pred_gdf[pred_col] == 1]
+        no_deposit_count = len(pred_gdf) - len(deposit_gdf)
+        print(f"Showing {len(deposit_gdf)} predicted deposits (filtered out {no_deposit_count} no-deposit points)")
+    else:
+        deposit_gdf = pred_gdf
+
+    # Add PREDICTED DEPOSITS to map (RED markers)
+    predicted_group = folium.FeatureGroup(name='Predicted Deposits (Red)')
+    
+    # Heatmap for deposit areas only
+    if prob_col in deposit_gdf.columns and len(deposit_gdf) > 0:
+        heat_data = []
+        for idx, row in deposit_gdf.iterrows():
+            lat, lon = get_coords(row.geometry)
+            heat_data.append([lat, lon, row[prob_col]])
+        HeatMap(heat_data, radius=15).add_to(predicted_group)
+
+    # Show PREDICTED DEPOSIT markers (red)
+    if pred_col in deposit_gdf.columns:
+        for idx, row in deposit_gdf.iterrows():
+            lat, lon = get_coords(row.geometry)
             folium.CircleMarker(
-                location=[row.geometry.y, row.geometry.x],
-                radius=6,
-                color=color,
+                location=[lat, lon],
+                radius=8,
+                color='red',
                 fill=True,
-                fill_color=color,
-                popup=f"Probability: {row.get(prob_col, 'N/A'):.2f}<br>Prediction: {'Deposit' if row[pred_col] == 1 else 'No Deposit'}",
-                fill_opacity=0.7
-            ).add_to(m)
+                fill_color='red',
+                popup=f"PREDICTED DEPOSIT<br>Probability: {row.get(prob_col, 'N/A'):.2f}",
+                fill_opacity=0.8
+            ).add_to(predicted_group)
+    predicted_group.add_to(m)
 
     folium.LayerControl().add_to(m)
     map_html = m._repr_html_()

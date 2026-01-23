@@ -74,6 +74,41 @@ def process_shapefile(file_path, data_type='features', mineral=None):
     except Exception as e:
         return f"Error processing shapefile {file_path}: {str(e)}"
 
+def process_geojson(file_path, data_type='features', mineral=None):
+    """Process a GeoJSON file: read, validate, save."""
+    try:
+        # Read GeoJSON
+        gdf = gpd.read_file(file_path)
+
+        # Set or convert CRS to EPSG:4326
+        if gdf.crs is None:
+            gdf = gdf.set_crs('EPSG:4326')
+        elif gdf.crs != 'EPSG:4326':
+            gdf = gdf.to_crs('EPSG:4326')
+
+        # Validate CRS
+        validate_crs(gdf)
+
+        # Spatial indexing
+        gdf.sindex
+
+        filename = os.path.basename(file_path)
+        
+        # Save based on data type
+        if data_type == 'deposits':
+            directory = 'data/deposits/'
+            save_deposit_data(gdf, filename, directory, mineral)
+        else:
+            out_filename = filename.replace('.geojson', '.parquet')
+            directory = 'data/features/'
+            save_geoparquet(gdf, out_filename, directory, mineral)
+            filename = out_filename
+
+        return f"Successfully processed GeoJSON: {filename}"
+
+    except Exception as e:
+        return f"Error processing GeoJSON {file_path}: {str(e)}"
+
 def process_csv(file_path, data_type='deposits', mineral=None):
     """Process a CSV file: read, save to appropriate directory."""
     try:
@@ -112,6 +147,12 @@ def detect_data_type(file_path):
                 return 'features'
         except Exception:
             return 'features'
+    elif file_path.endswith('.geojson'):
+        # For GeoJSON, check filename for hints
+        if 'deposit' in file_path.lower():
+            return 'deposits'
+        else:
+            return 'features'
     else:
         # For shapefiles, assume features unless filename contains 'deposit'
         if 'deposit' in file_path.lower():
@@ -128,6 +169,8 @@ def ingest_files(file_list, mineral=None):
             result = process_shapefile(file_path, data_type, mineral)
         elif file_path.endswith('.csv'):
             result = process_csv(file_path, data_type, mineral)
+        elif file_path.endswith('.geojson'):
+            result = process_geojson(file_path, data_type, mineral)
         else:
             result = f"Unsupported file type: {file_path}"
         results.append(result)

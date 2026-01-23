@@ -79,7 +79,7 @@ def apply_feature_engineering(prediction_gdf, base_features_file='features.parqu
     return prediction_gdf
 
 def load_model(model_version):
-    """Load model from registry."""
+    """Load model from registry. Returns (model, feature_names)."""
     models = get_models()
     model_info = next((m for m in models if m[1] == model_version), None)
     if not model_info:
@@ -87,31 +87,45 @@ def load_model(model_version):
     model_path = json.loads(model_info[2])['model_path'] if model_info[2] else f"models/model_v{model_version}.joblib"
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file {model_path} not found")
-    model = joblib.load(model_path)
-    return model
+    loaded = joblib.load(model_path)
+    
+    feature_names = None
+    
+    # Handle case where joblib file contains a dict with 'model' key
+    if isinstance(loaded, dict):
+        if 'model' in loaded:
+            model = loaded['model']
+            feature_names = loaded.get('feature_names', None)
+        elif 'classifier' in loaded:
+            model = loaded['classifier']
+            feature_names = loaded.get('feature_names', None)
+        else:
+            raise ValueError(f"Model file contains dict but no 'model' or 'classifier' key. Keys found: {list(loaded.keys())}")
+    else:
+        model = loaded
+    
+    return model, feature_names
 
 def generate_predictions(model, features_gdf, feature_cols=None):
     """Generate probability predictions."""
-    if feature_cols is None:
-        # Assume all numeric columns except geometry, lat, lon
-        feature_cols = features_gdf.select_dtypes(include=[np.number]).columns.tolist()
-        feature_cols = [c for c in feature_cols if c not in ['geometry', 'lat', 'lon']]
-
-    # Ensure feature columns are in the same order as training
-    # Get expected features from model (if available) or use the order from training data
-    if hasattr(model, 'feature_names_in_'):
+    # If feature_cols provided from model dict, use those
+    if feature_cols is not None:
+        expected_features = feature_cols
+    elif hasattr(model, 'feature_names_in_'):
         expected_features = model.feature_names_in_.tolist()
-        # Filter to only include features that exist in the data
-        feature_cols = [f for f in expected_features if f in features_gdf.columns]
-        # Add any missing expected features with NaN
-        for f in expected_features:
-            if f not in features_gdf.columns:
-                features_gdf[f] = np.nan
-        feature_cols = expected_features
+    else:
+        # Assume all numeric columns except geometry, lat, lon
+        expected_features = features_gdf.select_dtypes(include=[np.number]).columns.tolist()
+        expected_features = [c for c in expected_features if c not in ['geometry', 'lat', 'lon', 'probability', 'prediction', 'confidence']]
 
-    X = features_gdf[feature_cols]
-    # Handle NaNs
-    X = X.fillna(X.mean())
+    # Add any missing expected features with 0
+    for f in expected_features:
+        if f not in features_gdf.columns:
+            features_gdf[f] = 0.0
+
+    X = features_gdf[expected_features].copy()
+    # Handle NaNs - fill with 0 for missing features
+    X = X.fillna(0)
 
     if hasattr(model, 'predict_proba'):
         probs = model.predict_proba(X)[:, 1]
@@ -144,6 +158,21 @@ def run_prediction_pipeline(prediction_area_path, model_version, threshold=0.5, 
     # Load prediction area
     prediction_gdf = load_prediction_area(prediction_area_path, file_type)
 
+    # Check if input contains polygons - if so, sample to grid of points
+    if len(prediction_gdf) > 0:
+        geom_type = prediction_gdf.geometry.iloc[0].geom_type
+        if geom_type in ['Polygon', 'MultiPolygon']:
+            print(f"Detected polygon input - sampling to grid of points...")
+            # Use 0.05 degree spacing (~5km) to cover the region
+            prediction_gdf = sample_polygon_to_points(prediction_gdf, spacing=0.05)
+            print(f"Generated {len(prediction_gdf)} sample points across the polygon")
+            
+            if len(prediction_gdf) == 0:
+                raise ValueError("No points could be sampled from the polygon. The area may be too small.")
+            
+            # Extract features for the sampled points
+            prediction_gdf = extract_features_from_points(prediction_gdf)
+
     # Check if prediction area already has the required features (like from CSV upload)
     # If it has columns like elevation, slope, aspect, geology codes, use them directly
     feature_columns = ['elevation', 'slope', 'aspect'] + [f'geology_code_{i}' for i in range(1, 29)] + ['geology_code_unknown']
@@ -157,10 +186,10 @@ def run_prediction_pipeline(prediction_area_path, model_version, threshold=0.5, 
         prediction_gdf = apply_feature_engineering(prediction_gdf, base_features_file)
 
     # Load model
-    model = load_model(model_version)
+    model, feature_names = load_model(model_version)
 
     # Generate predictions
-    prediction_gdf = generate_predictions(model, prediction_gdf)
+    prediction_gdf = generate_predictions(model, prediction_gdf, feature_cols=feature_names)
 
     # Threshold
     prediction_gdf = threshold_predictions(prediction_gdf, threshold)
@@ -249,39 +278,47 @@ def sample_polygon_to_points(polygon_gdf, spacing=0.0003):
 
 def extract_features_from_points(points_gdf):
     """
-    Extract features for each point using DEM, slope, aspect, and geology data.
+    Extract ALL features for each point from the grid data using nearest neighbor lookup.
     """
-    grid_path = 'data/grid_with_all_features - grid_with_all_features.csv'
+    # Use the gold grid file which has the most complete data
+    grid_path = 'data/gold grid_with_all_features.csv'
     if not os.path.exists(grid_path):
-        raise FileNotFoundError(f"Grid file not found: {grid_path}")
+        # Try alternate paths
+        for alt_path in ['data/copper_grid_with_features.csv', 'data/uranium_grid_with_features.csv']:
+            if os.path.exists(alt_path):
+                grid_path = alt_path
+                break
+        else:
+            raise FileNotFoundError(f"No grid file found in data folder")
+    
+    # Reset index to ensure proper indexing
+    points_gdf = points_gdf.reset_index(drop=True)
     
     min_x, min_y, max_x, max_y = points_gdf.total_bounds
-    buffer = 0.1
+    buffer = 0.5  # Larger buffer to ensure we find nearby points
     
-    grid_df = pd.read_csv(grid_path, usecols=['latitude', 'longitude', 'elevation_m', 'slope_deg', 'aspect_deg', 'elevation_code'])
+    # Read grid data
+    grid_df = pd.read_csv(grid_path)
+    
+    # Find lat/lon columns
+    lat_col = 'latitude' if 'latitude' in grid_df.columns else 'lat'
+    lon_col = 'longitude' if 'longitude' in grid_df.columns else 'lon'
+    
     grid_df = grid_df[
-        (grid_df['longitude'] >= min_x - buffer) & 
-        (grid_df['longitude'] <= max_x + buffer) & 
-        (grid_df['latitude'] >= min_y - buffer) & 
-        (grid_df['latitude'] <= max_y + buffer)
+        (grid_df[lon_col] >= min_x - buffer) & 
+        (grid_df[lon_col] <= max_x + buffer) & 
+        (grid_df[lat_col] >= min_y - buffer) & 
+        (grid_df[lat_col] <= max_y + buffer)
     ]
     
     if grid_df.empty:
-        raise ValueError("No grid data available in the prediction area")
+        raise ValueError("No grid data available in the prediction area. The area may be outside the training data coverage.")
     
     grid_gdf = gpd.GeoDataFrame(
         grid_df,
-        geometry=gpd.points_from_xy(grid_df['longitude'], grid_df['latitude']),
+        geometry=gpd.points_from_xy(grid_df[lon_col], grid_df[lat_col]),
         crs='EPSG:4326'
-    )
-    
-    points_gdf['elevation'] = np.nan
-    points_gdf['slope'] = np.nan
-    points_gdf['aspect'] = np.nan
-    
-    geology_columns = [f'geology_code_{i}' for i in range(1, 29)] + ['geology_code_unknown']
-    for col in geology_columns:
-        points_gdf[col] = 0.0
+    ).reset_index(drop=True)
     
     from scipy.spatial import cKDTree
     
@@ -291,17 +328,21 @@ def extract_features_from_points(points_gdf):
     tree = cKDTree(grid_coords)
     distances, indices = tree.query(points_coords, k=1)
     
+    # Get ALL feature columns from grid (exclude lat, lon, geometry, label columns)
+    exclude_cols = [lat_col, lon_col, 'geometry', 'gold_present', 'copper_present', 'uranium_present', 'label']
+    feature_cols = [col for col in grid_df.columns if col not in exclude_cols]
+    
+    # Copy all features from nearest grid point to each prediction point
+    for col in feature_cols:
+        points_gdf[col] = 0.0
+    
     for i, idx in enumerate(indices):
         nearest_point = grid_gdf.iloc[idx]
-        points_gdf.at[i, 'elevation'] = nearest_point['elevation_m']
-        points_gdf.at[i, 'slope'] = nearest_point['slope_deg']
-        points_gdf.at[i, 'aspect'] = nearest_point['aspect_deg']
-        
-        elevation_code = nearest_point['elevation_code']
-        if 1 <= elevation_code <= 28:
-            points_gdf.at[i, f'geology_code_{elevation_code}'] = 1.0
-        else:
-            points_gdf.at[i, 'geology_code_unknown'] = 1.0
+        for col in feature_cols:
+            if col in nearest_point.index:
+                points_gdf.loc[i, col] = nearest_point[col]
+    
+    print(f"Extracted {len(feature_cols)} features for {len(points_gdf)} points")
     
     return points_gdf
 
@@ -317,9 +358,9 @@ def run_prediction_pipeline_from_geojson(polygon_gdf, model_version, threshold=0
     
     points_gdf = extract_features_from_points(points_gdf)
     
-    model = load_model(model_version)
+    model, feature_names = load_model(model_version)
     
-    points_gdf = generate_predictions(model, points_gdf)
+    points_gdf = generate_predictions(model, points_gdf, feature_cols=feature_names)
     
     points_gdf = threshold_predictions(points_gdf, threshold)
     
