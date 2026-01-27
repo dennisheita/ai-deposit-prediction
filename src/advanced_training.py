@@ -39,33 +39,79 @@ def stratified_spatial_negative_sampling(positives_gdf, features_gdf, n_negative
     """
     n_positives = len(positives_gdf)
     n_negatives = n_positives * n_negatives_per_positive
+    
+    # Ensure features_gdf has valid geometry
+    if not hasattr(features_gdf, 'geometry') or features_gdf.geometry.isna().all():
+        logging.warning("Features GeoDataFrame has no valid geometry. Creating from lat/lon if available.")
+        if 'lon' in features_gdf.columns and 'lat' in features_gdf.columns:
+            features_gdf = gpd.GeoDataFrame(
+                features_gdf,
+                geometry=gpd.points_from_xy(features_gdf['lon'], features_gdf['lat']),
+                crs='EPSG:4326'
+            )
+        else:
+            logging.error("Cannot perform spatial negative sampling: no geometry or lat/lon columns found.")
+            empty_gdf = gpd.GeoDataFrame(columns=features_gdf.columns.tolist() + ['label'], crs='EPSG:4326')
+            return empty_gdf
 
     # Exclude areas within min_distance of positives (if min_distance > 0)
-    if min_distance > 0:
-        positives_buffer = positives_gdf.buffer(min_distance)
-        union_buffer = positives_buffer.unary_union
-        candidates = features_gdf[~features_gdf.geometry.intersects(union_buffer)]
-    else:
-        # If min_distance is 0, use all features as candidates (no buffer)
+    try:
+        if min_distance > 0:
+            positives_buffer = positives_gdf.buffer(min_distance)
+            union_buffer = positives_buffer.unary_union
+            candidates = features_gdf[~features_gdf.geometry.intersects(union_buffer)]
+        else:
+            # If min_distance is 0, use all features as candidates (no buffer)
+            candidates = features_gdf.copy()
+    except Exception as e:
+        logging.warning(f"Error in spatial buffer operation: {e}. Using all features as candidates.")
         candidates = features_gdf.copy()
+    
+    if len(candidates) == 0:
+        logging.warning("No candidates available for negative sampling after spatial filtering.")
+        # Fallback: use features without spatial filtering
+        candidates = features_gdf.copy()
+    
+    if len(candidates) == 0:
+        logging.error("No candidates available for negative sampling at all.")
+        empty_gdf = gpd.GeoDataFrame(columns=features_gdf.columns.tolist() + ['label'], crs='EPSG:4326')
+        return empty_gdf
 
+    # Try stratified sampling if strata column exists and has valid numeric data
     if strata_cols and strata_cols[0] in candidates.columns:
-        candidates = candidates.copy()
-        candidates['strata'] = pd.qcut(candidates[strata_cols[0]], q=5, labels=False, duplicates='drop')
-        strata_counts = candidates['strata'].value_counts()
-        negatives = []
-        for strata in strata_counts.index:
-            strata_candidates = candidates[candidates['strata'] == strata]
-            sample_size = int(n_negatives / len(strata_counts))
-            if sample_size > 0:
-                sampled = strata_candidates.sample(min(sample_size, len(strata_candidates)), random_state=42)
-                negatives.append(sampled)
-        negatives_gdf = pd.concat(negatives) if negatives else gpd.GeoDataFrame()
-        # Remove strata column after sampling
-        if 'strata' in negatives_gdf.columns:
-            negatives_gdf = negatives_gdf.drop(columns=['strata'])
+        try:
+            strata_col = candidates[strata_cols[0]]
+            # Check if column is numeric and has valid data
+            if pd.api.types.is_numeric_dtype(strata_col) and not strata_col.isna().all():
+                candidates = candidates.copy()
+                candidates['strata'] = pd.qcut(candidates[strata_cols[0]], q=5, labels=False, duplicates='drop')
+                strata_counts = candidates['strata'].value_counts()
+                negatives = []
+                for strata in strata_counts.index:
+                    strata_candidates = candidates[candidates['strata'] == strata]
+                    sample_size = int(n_negatives / len(strata_counts))
+                    if sample_size > 0:
+                        sampled = strata_candidates.sample(min(sample_size, len(strata_candidates)), random_state=42)
+                        negatives.append(sampled)
+                negatives_gdf = pd.concat(negatives) if negatives else gpd.GeoDataFrame()
+                # Remove strata column after sampling
+                if 'strata' in negatives_gdf.columns:
+                    negatives_gdf = negatives_gdf.drop(columns=['strata'])
+            else:
+                raise ValueError("Strata column is not numeric or has no valid data")
+        except Exception as e:
+            logging.warning(f"Stratified sampling failed: {e}. Using simple random sampling.")
+            sample_size = min(n_negatives, len(candidates))
+            negatives_gdf = candidates.sample(sample_size, random_state=42) if len(candidates) > 0 else gpd.GeoDataFrame()
     else:
-        negatives_gdf = candidates.sample(min(n_negatives, len(candidates)), random_state=42)
+        # Simple random sampling
+        sample_size = min(n_negatives, len(candidates))
+        negatives_gdf = candidates.sample(sample_size, random_state=42) if len(candidates) > 0 else gpd.GeoDataFrame()
+    
+    if len(negatives_gdf) == 0:
+        logging.error("Failed to generate any negative samples.")
+    else:
+        logging.info(f"Generated {len(negatives_gdf)} negative samples.")
 
     negatives_gdf['label'] = 0
     return negatives_gdf
@@ -307,6 +353,37 @@ def run_advanced_training_pipeline(features_file, deposits_file, mineral=None, n
             coords = np.array([[geom.x, geom.y] for geom in train_data.geometry])
         
         logging.info(f"Training data: {len(train_data)} samples, {sum(y)} positives, {len(y) - sum(y)} negatives.")
+        
+        # Check if we have both positive and negative samples
+        if sum(y) == 0:
+            raise ValueError("No positive samples in training data. Cannot train model.")
+        if sum(y) == len(y):
+            raise ValueError("No negative samples in training data. Cannot train model.")
+        
+        # Clean the feature data - handle 'No Data' and other string values
+        # Drop non-numeric columns
+        numeric_columns = X.select_dtypes(include=[np.number]).columns.tolist()
+        if len(numeric_columns) == 0:
+            raise ValueError("No numeric columns found in training data.")
+        
+        X = X[numeric_columns]
+        
+        # Handle missing values - replace common non-numeric strings with NaN
+        X = X.replace(['No Data', 'ND', 'N/A', 'n/a', 'null', 'NULL', 'None', 'none', ''], np.nan)
+        
+        # Check for any remaining non-numeric values and convert or drop
+        for col in X.columns:
+            if X[col].dtype == object:
+                try:
+                    X[col] = pd.to_numeric(X[col], errors='coerce')
+                except Exception as e:
+                    logging.warning(f"Dropping column {col} - cannot convert to numeric: {e}")
+                    X = X.drop(columns=[col])
+        
+        # Fill NaN values with median (more robust than mean)
+        X = X.fillna(X.median())
+        
+        logging.info(f"After cleaning: X shape = {X.shape}, numeric columns = {len(X.columns)}")
         
         cv = list(spatial_kfold_cv(X, y, coords, k))
         

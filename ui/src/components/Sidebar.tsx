@@ -2,9 +2,9 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 
-const Sidebar = () => {
+const SidebarContent = () => {
   const pathname = usePathname()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -29,7 +29,6 @@ const Sidebar = () => {
 
   const links = [
     { href: '/', label: '🏠 Home' },
-    { href: '/upload', label: '📤 Data Upload' },
     { href: '/prediction', label: '🔮 Run Prediction' },
     { href: '/map', label: '🗺️ Map Visualization' },
     { href: '/stats', label: '📊 Statistics Dashboard' },
@@ -62,9 +61,8 @@ const Sidebar = () => {
               <li key={link.href}>
                 <Link
                   href={href}
-                  className={`block p-2 rounded hover:bg-gray-700 ${
-                    pathname === link.href ? 'bg-gray-700' : ''
-                  }`}
+                  className={`block p-2 rounded hover:bg-gray-700 ${pathname === link.href ? 'bg-gray-700' : ''
+                    }`}
                 >
                   {link.label}
                 </Link>
@@ -74,6 +72,19 @@ const Sidebar = () => {
         </ul>
       </nav>
     </div>
+  )
+}
+
+const Sidebar = () => {
+  return (
+    <Suspense fallback={
+      <div className="w-64 bg-gray-800 text-white h-screen fixed left-0 top-0 p-4">
+        <h2 className="text-xl font-bold mb-8">AI Deposit Prediction</h2>
+        <div className="animate-pulse">Loading...</div>
+      </div>
+    }>
+      <SidebarContent />
+    </Suspense>
   )
 }
 

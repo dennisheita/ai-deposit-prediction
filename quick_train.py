@@ -1,114 +1,87 @@
 #!/usr/bin/env python3
 """
-Quick training script using existing CSV files
+Quick training script that uses CSV files directly without GeoParquet conversion.
+Designed for speed and simplicity.
 """
 
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 import pandas as pd
-import numpy as np
-from src.advanced_training import train_xgboost, train_lightgbm, train_random_forest, create_ensemble, calculate_metrics, save_model
-import datetime
-import joblib
+import geopandas as gpd
+from shapely.geometry import Point
+import os
+import sys
+from src.training_pipeline import run_training_pipeline
+import time
 
-def quick_train():
-    # Load existing training data
-    try:
-        X_train = pd.read_csv('ml_data copy/X_train.csv')
-        y_train = pd.read_csv('ml_data copy/y_train.csv').squeeze()
-        X_val = pd.read_csv('ml_data copy/X_val.csv')
-        y_val = pd.read_csv('ml_data copy/y_val.csv').squeeze()
-        X_test = pd.read_csv('ml_data copy/X_test.csv')
-        y_test = pd.read_csv('ml_data copy/y_test.csv').squeeze()
-        
-        print('✅ Training data loaded:')
-        print(f'  X_train shape: {X_train.shape}')
-        print(f'  y_train shape: {y_train.shape}')
-        print(f'  X_val shape: {X_val.shape}')
-        print(f'  y_val shape: {y_val.shape}')
-        print(f'  X_test shape: {X_test.shape}')
-        print(f'  y_test shape: {y_test.shape}')
-        
-    except Exception as e:
-        print(f'❌ Error loading training data: {str(e)}')
-        return False
+def main():
+    # Define the data files and corresponding minerals
+    data_files = [
+        ('data/copper_complete_real.csv', 'Copper', 'copper_present'),
+        ('data/gold_complete_real.csv', 'Gold', 'gold_present'),
+        ('data/uranium_complete_real.csv', 'Uranium', 'uranium_present')
+    ]
     
-    # Combine train and validation data for training
-    X_all = pd.concat([X_train, X_val], ignore_index=True)
-    y_all = pd.concat([y_train, y_val], ignore_index=True)
+    # Create a temporary directory for GeoParquet files
+    temp_dir = 'data/temp'
+    os.makedirs(temp_dir, exist_ok=True)
     
-    # Create dummy cross-validation folds (simple stratified split)
-    from sklearn.model_selection import StratifiedKFold
-    cv = list(StratifiedKFold(n_splits=3, shuffle=True, random_state=42).split(X_all, y_all))
-    
-    # Train models
-    print('\n🚀 Training models...')
-    
-    try:
-        version = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    # Process each mineral
+    for csv_path, mineral, label_col in data_files:
+        print(f"\n{'='*50}")
+        print(f"Processing {mineral} data...")
+        print('='*50)
         
-        print('  XGBoost...')
-        xgb_model, xgb_params, xgb_score = train_xgboost(X_all, y_all, cv, n_trials=3)
+        # Load CSV file
+        df = pd.read_csv(csv_path)
         
-        print('  LightGBM...')
-        lgb_model, lgb_params, lgb_score = train_lightgbm(X_all, y_all, cv, n_trials=3)
+        # Create GeoDataFrame from lat/lon
+        gdf = gpd.GeoDataFrame(
+            df,
+            geometry=[Point(xy) for xy in zip(df['longitude'], df['latitude'])],
+            crs='EPSG:4326'
+        )
         
-        print('  Random Forest...')
-        rf_model, rf_params, rf_score = train_random_forest(X_all, y_all, cv, n_trials=3)
+        # Save as GeoParquet
+        filename = os.path.basename(csv_path).replace('.csv', '.geoparquet')
+        features_path = os.path.join(temp_dir, f"{mineral.lower()}_features.geoparquet")
+        deposits_path = os.path.join(temp_dir, f"{mineral.lower()}_deposits.geoparquet")
         
-        print('  Ensemble...')
-        ensemble = create_ensemble([xgb_model, lgb_model, rf_model])
-        ensemble.fit(X_all, y_all)
+        gdf.to_parquet(features_path)
+        gdf.to_parquet(deposits_path)
         
-        print('\n✅ Training completed!')
+        print(f"Saved {mineral} features to: {features_path}")
+        print(f"Saved {mineral} deposits to: {deposits_path}")
         
-        # Evaluate on test set
-        print('\n📊 Test set evaluation:')
-        models = {
-            'XGBoost': xgb_model,
-            'LightGBM': lgb_model,
-            'Random Forest': rf_model,
-            'Ensemble': ensemble
-        }
+        # Train models
+        num_runs = 15
+        print(f"\nTraining {num_runs} models for {mineral}...")
         
-        for name, model in models.items():
-            y_pred = model.predict(X_test)
-            y_prob = model.predict_proba(X_test)[:, 1]
-            metrics = calculate_metrics(y_test, y_pred, y_prob)
-            print(f'\n{name}:')
-            print(f'  AUC: {metrics["auc"]:.4f}')
-            print(f'  Accuracy: {metrics["accuracy"]:.4f}')
-            print(f'  Precision: {metrics["precision"]:.4f}')
-            print(f'  Recall: {metrics["recall"]:.4f}')
-            print(f'  F1: {metrics["f1"]:.4f}')
+        for i in range(num_runs):
+            run_num = i + 1
+            print(f"\nRun {run_num}/{num_runs} for {mineral}")
             
-            # Save model
-            joblib.dump(model, f'models/{name.lower().replace(" ", "")}_model_v{version}.joblib')
-        
-        # Save best model
-        best_score = 0
-        best_model = None
-        best_name = ''
-        
-        for name, model in models.items():
-            y_prob = model.predict_proba(X_test)[:, 1]
-            auc = np.mean([calculate_metrics(y_test, model.predict(X_test), y_prob)['auc']])
-            if auc > best_score:
-                best_score = auc
-                best_model = model
-                best_name = name
-        
-        print(f'\n🏆 Best model: {best_name} (AUC: {best_score:.4f})')
-        joblib.dump(best_model, f'models/best_model_v{version}.joblib')
-        
-        return True
-        
-    except Exception as e:
-        print(f'\n❌ Training failed: {str(e)}')
-        return False
+            try:
+                result = run_training_pipeline(
+                    os.path.basename(features_path),
+                    os.path.basename(deposits_path),
+                    mineral=mineral,
+                    n_negatives_per_positive=2,
+                    k=10
+                )
+                print(f"Success: {result}")
+                
+                time.sleep(0.5)
+                
+            except Exception as e:
+                print(f"Error: {str(e)}")
+                continue
+    
+    print(f"\n{'='*50}")
+    print("Training completed!")
+    print('='*50)
+    
+    # Cleanup temporary files if needed
+    # import shutil
+    # shutil.rmtree(temp_dir)
 
 if __name__ == "__main__":
-    print('Quick training using existing CSV files...')
-    quick_train()
+    main()

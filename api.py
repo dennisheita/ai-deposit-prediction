@@ -17,6 +17,7 @@ import io
 import base64
 import subprocess
 import threading
+from datetime import datetime, timedelta
 
 from src.data_ingestion import ingest_files
 from src.prediction import run_prediction_pipeline, run_prediction_pipeline_from_geojson
@@ -137,7 +138,16 @@ async def predict(
     model_version = models[-1][1]
 
     # Run prediction
-    output_filename, pred_gdf = run_prediction_pipeline(prediction_area_path, model_version, threshold, mineral=mineral)
+    try:
+        output_filename, pred_gdf = run_prediction_pipeline(prediction_area_path, model_version, threshold, mineral=mineral)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail=f"Model error: {str(e)}. Please train a model first in the Training section.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Input error: {str(e)}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
     # Create map
     # Reproject to a projected CRS for accurate centroid calculation
@@ -372,12 +382,16 @@ async def get_stats(mineral: str = "All Minerals"):
         fi_img = base64.b64encode(buf.read()).decode('utf-8')
         plt.close(fig_fi)
 
+    from src.data_architecture import get_unique_minerals
+    all_minerals = get_unique_minerals()
+
     return {
         "models": models,
         "alerts": alerts,
         "report": report,
         "trends_img": trends_img,
-        "fi_img": fi_img
+        "fi_img": fi_img,
+        "all_minerals": all_minerals
     }
 
 @app.get("/models")
@@ -398,31 +412,124 @@ async def get_files_list(mineral: str = "All Minerals"):
 
 @app.get("/map")
 async def get_map(mineral: str = "All Minerals"):
-    prediction_files = [f for f in get_files() if f[3] == 'prediction' and (mineral == 'All Minerals' or f[6] == mineral)]
-    m = folium.Map(location=[0, 0], zoom_start=2)
-    for f in prediction_files:
-        shp_path = f"data/predictions/{f[1]}.shp"
-        if os.path.exists(shp_path):
-            pred_gdf = gpd.read_file(shp_path)
-            prob_col = 'probabilit' if 'probabilit' in pred_gdf.columns else 'probability'
-            pred_col = 'predictio' if 'predictio' in pred_gdf.columns else 'prediction'
-            for idx, row in pred_gdf.iterrows():
-                if row[pred_col] == 1:
-                    # Use centroid for polygons
-                    if row.geometry.geom_type == 'Polygon':
-                        center = row.geometry.centroid
-                        lat, lon = center.y, center.x
-                    else:
-                        lat, lon = row.geometry.y, row.geometry.x
-                    folium.CircleMarker(
-                        location=[lat, lon],
-                        radius=5,
-                        color='red',
-                        fill=True,
-                        fill_color='red',
-                        popup=f"Mineral: {f[6] or 'Unknown'}<br>Probability: {row.get(prob_col, 'N/A'):.2f}",
-                        fill_opacity=0.7
-                    ).add_to(m)
+    # Retrieve all files of type 'prediction'
+    all_files = get_files()
+    # Correct indexing: 0:id, 1:filename, 2:type, 3:date, 4:status, 5:path, 6:mineral
+    prediction_files = [f for f in all_files if f[2] == 'prediction']
+    
+    # Filter by mineral if specified
+    if mineral != 'All Minerals':
+        prediction_files = [f for f in prediction_files if f[6] == mineral]
+    
+    # Sort by date descending and pick only the LATEST prediction
+    prediction_files.sort(key=lambda x: x[3], reverse=True)
+    
+    latest_prediction = prediction_files[0] if prediction_files else None
+    
+    # "Linger" Control: Only show results if the prediction was made in the last 15 minutes
+    # This keeps the map "clean" by default unless a run was just performed.
+    is_recent = False
+    if latest_prediction:
+        try:
+            pred_time = datetime.fromisoformat(latest_prediction[3])
+            if datetime.now() - pred_time < timedelta(minutes=15):
+                is_recent = True
+        except Exception:
+            is_recent = False
+
+    # Initialize map (Clean by default)
+    m = folium.Map(location=[-22, 18], zoom_start=6) 
+    
+    all_points = []
+    
+    if is_recent:
+        # Helper to load known deposits
+        def load_known_deposits(mineral_name):
+            known_deps = []
+            try:
+                configs = [
+                    ('Gold', 'data/gold grid_with_all_features.csv', 'gold_present'),
+                    ('Copper', 'data/copper_grid_with_features.csv', 'copper_present'),
+                    ('Uranium', 'data/uranium_grid_with_features.csv', 'uranium_present')
+                ]
+                for m_type, path, col in configs:
+                    if mineral_name == 'All Minerals' or mineral_name == m_type:
+                        if os.path.exists(path):
+                            df = pd.read_csv(path)
+                            deps = df[df[col] == 1][['latitude', 'longitude']]
+                            for _, row in deps.iterrows():
+                                known_deps.append({'lat': row['latitude'], 'lon': row['longitude'], 'mineral': m_type})
+            except Exception as e:
+                print(f"Error loading known deposits: {e}")
+            return known_deps
+
+        # Add known deposits context (Green) - Only if active session
+        known_deps = load_known_deposits(mineral)
+        known_group = folium.FeatureGroup(name=f"Known {mineral} Deposits")
+        for dep in known_deps:
+            folium.CircleMarker(
+                location=[dep['lat'], dep['lon']],
+                radius=4,
+                color='green',
+                fill=True,
+                fill_color='green',
+                popup=f"KNOWN DEPOSIT: {dep['mineral']}",
+                fill_opacity=0.6
+            ).add_to(known_group)
+        known_group.add_to(m)
+
+        # Add the LATEST prediction (Red)
+        if latest_prediction:
+            shp_path = latest_prediction[5]
+            if not os.path.exists(shp_path):
+                shp_path = f"data/predictions/{latest_prediction[1]}"
+                if not shp_path.endswith('.shp'): shp_path += '.shp'
+                
+            if os.path.exists(shp_path):
+                try:
+                    pred_gdf = gpd.read_file(shp_path)
+                    prob_col = 'probabilit' if 'probabilit' in pred_gdf.columns else 'probability'
+                    pred_col = 'predictio' if 'predictio' in pred_gdf.columns else 'prediction'
+                    
+                    prediction_group = folium.FeatureGroup(name=f"Latest {latest_prediction[6]} Prediction")
+                    
+                    for idx, row in pred_gdf.iterrows():
+                        if row[pred_col] == 1:
+                            if row.geometry.geom_type == 'Point':
+                                lat, lon = row.geometry.y, row.geometry.x
+                            else:
+                                center = row.geometry.centroid
+                                lat, lon = center.y, center.x
+                            
+                            all_points.append([lat, lon])
+                            folium.CircleMarker(
+                                location=[lat, lon],
+                                radius=6,
+                                color='red',
+                                fill=True,
+                                fill_color='red',
+                                popup=f"PREDICTED DEPOSIT<br>Mineral: {latest_prediction[6]}<br>Prob: {row.get(prob_col, 'N/A'):.2f}",
+                                fill_opacity=0.8
+                            ).add_to(prediction_group)
+                    
+                    prediction_group.add_to(m)
+                except Exception as e:
+                    print(f"Error reading prediction file {shp_path}: {e}")
+
+        # Auto-center map if points found in the latest prediction
+        if all_points:
+            mean_lat = sum(p[0] for p in all_points) / len(all_points)
+            mean_lon = sum(p[1] for p in all_points) / len(all_points)
+            m.location = [mean_lat, mean_lon]
+            m.zoom_start = 9
+    else:
+        # Default message if no recent prediction
+        folium.Marker(
+            location=[-22, 18],
+            icon=folium.Icon(color='blue', icon='info-sign'),
+            popup="No active prediction session. Run a new prediction to see results here."
+        ).add_to(m)
+
     folium.LayerControl().add_to(m)
     map_html = m._repr_html_()
     return {"map_html": map_html}

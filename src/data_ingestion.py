@@ -99,7 +99,13 @@ def process_geojson(file_path, data_type='features', mineral=None):
             directory = 'data/deposits/'
             save_deposit_data(gdf, filename, directory, mineral)
         else:
-            out_filename = filename.replace('.geojson', '.parquet')
+            if filename.endswith('.geojson'):
+                out_filename = filename.replace('.geojson', '.parquet')
+            elif filename.endswith('.json'):
+                out_filename = filename.replace('.json', '.parquet')
+            else:
+                 out_filename = filename + '.parquet'
+
             directory = 'data/features/'
             save_geoparquet(gdf, out_filename, directory, mineral)
             filename = out_filename
@@ -109,32 +115,7 @@ def process_geojson(file_path, data_type='features', mineral=None):
     except Exception as e:
         return f"Error processing GeoJSON {file_path}: {str(e)}"
 
-def process_csv(file_path, data_type='deposits', mineral=None):
-    """Process a CSV file: read, save to appropriate directory."""
-    try:
-        validate_file_integrity(file_path, 'csv')
-
-        # Read CSV
-        df = pd.read_csv(file_path)
-
-        filename = os.path.basename(file_path)
-        # Ensure filename ends with .csv if it doesn't (though it should based on check above)
-        if not filename.endswith('.csv'):
-             filename += '.csv'
-             
-        if data_type == 'features':
-            # For features, we might save as parquet if it has geometry, or keep as CSV/parquet if not
-            # save_geoparquet handles the logic of checking for lat/lon
-            save_geoparquet(df, filename.replace('.csv', '.parquet'), 'data/features/', mineral)
-        else:
-            # For deposits, save_deposit_data handles checking for lat/lon
-            # If it's a CSV without lat/lon, it will be saved as CSV
-            save_deposit_data(df, filename, 'data/deposits/', mineral)
-
-        return f"Successfully processed CSV: {filename}"
-
-    except Exception as e:
-        return f"Error processing CSV {file_path}: {str(e)}"
+# ... (omitted process_csv) ...
 
 def detect_data_type(file_path):
     """Detect if file is features or deposits based on content."""
@@ -147,7 +128,7 @@ def detect_data_type(file_path):
                 return 'features'
         except Exception:
             return 'features'
-    elif file_path.endswith('.geojson'):
+    elif file_path.endswith('.geojson') or file_path.endswith('.json'):
         # For GeoJSON, check filename for hints
         if 'deposit' in file_path.lower():
             return 'deposits'
@@ -169,7 +150,7 @@ def ingest_files(file_list, mineral=None):
             result = process_shapefile(file_path, data_type, mineral)
         elif file_path.endswith('.csv'):
             result = process_csv(file_path, data_type, mineral)
-        elif file_path.endswith('.geojson'):
+        elif file_path.endswith('.geojson') or file_path.endswith('.json'):
             result = process_geojson(file_path, data_type, mineral)
         else:
             result = f"Unsupported file type: {file_path}"

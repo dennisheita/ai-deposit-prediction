@@ -150,7 +150,7 @@ def run_prediction_pipeline(prediction_area_path, model_version, threshold=0.5, 
     # Determine file type from path
     if prediction_area_path.endswith('.csv'):
         file_type = 'csv'
-    elif prediction_area_path.endswith('.geojson'):
+    elif prediction_area_path.endswith('.geojson') or prediction_area_path.endswith('.json'):
         file_type = 'geojson'
     else:
         file_type = 'shp'
@@ -208,7 +208,7 @@ def run_prediction_pipeline(prediction_area_path, model_version, threshold=0.5, 
 def convert_spatial_to_csv(input_path, output_path=None):
     """Convert shapefile or GeoJSON to CSV with lat/lon coordinates and template prediction features."""
     # Determine file type
-    if input_path.endswith('.geojson'):
+    if input_path.endswith('.geojson') or input_path.endswith('.json'):
         gdf = gpd.read_file(input_path, driver='GeoJSON')
     else:
         gdf = gpd.read_file(input_path)

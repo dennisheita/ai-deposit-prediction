@@ -30,13 +30,19 @@ def get_system_resources():
 
 def calculate_data_quality(gdf):
     """Calculate data quality metrics: completeness and spatial coverage."""
-    # Completeness: percentage of non-null values
-    completeness = gdf.drop(columns=['geometry']).notnull().mean().mean()
-
-    # Spatial coverage: area in square degrees (approximate)
-    if gdf.crs != 'EPSG:4326':
-        gdf = gdf.to_crs('EPSG:4326')
-    total_area = gdf.unary_union.convex_hull.area if len(gdf) > 0 else 0
+    # Handle case where gdf is a regular DataFrame (no geometry column)
+    if hasattr(gdf, 'geometry') and 'geometry' in gdf.columns:
+        # Completeness: percentage of non-null values (excluding geometry)
+        completeness = gdf.drop(columns=['geometry']).notnull().mean().mean()
+        
+        # Spatial coverage: area in square degrees (approximate)
+        if gdf.crs != 'EPSG:4326':
+            gdf = gdf.to_crs('EPSG:4326')
+        total_area = gdf.unary_union.convex_hull.area if len(gdf) > 0 else 0
+    else:
+        # Regular DataFrame - no geometry
+        completeness = gdf.notnull().mean().mean()
+        total_area = 0
 
     return completeness, total_area
 
@@ -66,7 +72,7 @@ def track_training_end(run_id, model, X, y, feature_names):
 
     update_training_run(run_id, end_time=end_time, duration=duration, cpu_usage=cpu, memory_usage=memory,
                         disk_usage=disk, accuracy=accuracy, auc=auc, f1=f1,
-                        feature_importances=feature_importances, status='completed')
+                        feature_importances=json.dumps(feature_importances) if feature_importances else None, status='completed')
 
     logging.info(f"Training completed for run_id {run_id}: AUC={auc}, Accuracy={accuracy}, F1={f1}")
 
@@ -84,6 +90,9 @@ def check_performance_degradation(current_run_id):
 
     current = runs[-1]
     previous = runs[-2]
+
+    if current[9] is None or previous[9] is None:
+        return
 
     if current[9] < previous[9] * 0.95:  # AUC dropped by 5%
         insert_alert('performance_degradation', f"AUC dropped from {previous[9]} to {current[9]}", 'warning')

@@ -1,15 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useSearchParams } from 'next/navigation'
-import Sidebar from '../../components/Sidebar'
+import { useState, useEffect, Suspense } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
+import FileUpload from '@/components/file-upload'
+import { Label } from '@/components/ui/label'
 
-export default function Prediction() {
+function PredictionContent() {
   const searchParams = useSearchParams()
+  const router = useRouter()
   const [file, setFile] = useState<File | null>(null)
   const [mineral, setMineral] = useState('All Minerals')
   const [threshold, setThreshold] = useState(0.5)
-  const [mapHtml, setMapHtml] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -19,7 +20,7 @@ export default function Prediction() {
   }, [searchParams])
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+    if (e) e.preventDefault()
     if (!file) return
 
     setLoading(true)
@@ -38,8 +39,12 @@ export default function Prediction() {
         const errorData = await response.json()
         throw new Error(errorData.detail || 'Prediction failed')
       }
-      const data = await response.json()
-      setMapHtml(data.map_html)
+
+      // Redirect to map page instead of showing it here
+      const params = new URLSearchParams()
+      params.set('mineral', mineral)
+      router.push(`/map?${params.toString()}`)
+
     } catch (error: any) {
       setError(error.message)
     } finally {
@@ -48,51 +53,44 @@ export default function Prediction() {
   }
 
   return (
-    <div className="flex">
-      <Sidebar />
-      <div className="ml-64 container mx-auto p-4">
-        <h1 className="text-3xl font-bold mb-8">Run Prediction - {mineral}</h1>
-        <form onSubmit={handleSubmit} className="space-y-4 mb-8">
-          <div>
-            <label className="block mb-2">Upload Prediction Data:</label>
-            <input
-              type="file"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-              accept=".csv,.shp,.zip,.geojson"
-              className="border p-2"
-              required
-            />
-          </div>
-          <div>
-            <label className="block mb-2">Threshold: {threshold}</label>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={threshold}
-              onChange={(e) => setThreshold(parseFloat(e.target.value))}
-              className="w-full"
-            />
-          </div>
-          <button
-            type="submit"
-            className="bg-purple-500 text-white px-4 py-2 rounded disabled:opacity-50"
-            disabled={loading}
-          >
-            {loading ? 'Running...' : 'Run Prediction'}
-          </button>
-        </form>
+    <div className="container mx-auto p-4 flex flex-col items-center">
+      <h1 className="text-3xl font-bold mb-8 w-full max-w-lg text-center">Run Prediction - {mineral}</h1>
 
-        {error && <p className="text-red-500 mb-4">{error}</p>}
+      <FileUpload
+        onFileSelect={setFile}
+        onSubmit={handleSubmit}
+        isSubmitting={loading}
+        label="Upload Prediction Data"
+        submitLabel="Run Prediction"
+        acceptedTypesLabel="CSV, SHP, ZIP, GeoJSON, JSON"
+        onCancel={() => {
+          setFile(null)
+          setError('')
+        }}
+      >
+        <div className="space-y-2 text-left">
+          <Label className="text-sm font-medium">Threshold: {threshold}</Label>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={threshold}
+            onChange={(e) => setThreshold(parseFloat(e.target.value))}
+            className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+          />
+        </div>
+      </FileUpload>
 
-        {mapHtml && (
-          <div>
-            <h2 className="text-2xl font-bold mb-4">Prediction Results</h2>
-            <div dangerouslySetInnerHTML={{ __html: mapHtml }} />
-          </div>
-        )}
-      </div>
+      {error && <p className="text-red-500 mt-4 p-3 bg-red-50 rounded-lg text-sm font-medium w-full max-w-lg">{error}</p>}
     </div>
+  )
+}
+
+export default function Prediction() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <PredictionContent />
+    </Suspense>
   )
 }

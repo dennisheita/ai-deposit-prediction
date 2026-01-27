@@ -65,7 +65,7 @@ if page == "Data Upload":
     st.title(f"Data Upload - {selected_mineral}")
     st.write("Upload shapefiles or CSV files. The system will automatically detect if they are features or deposits data.")
 
-    uploaded_files = st.file_uploader("Choose files", accept_multiple_files=True, type=['shp', 'zip', 'csv'])
+    uploaded_files = st.file_uploader("Choose files", accept_multiple_files=True, type=['shp', 'zip', 'csv', 'geojson', 'json'])
 
     if uploaded_files:
         if st.button("Process Files"):
@@ -114,6 +114,100 @@ if page == "Data Upload":
 elif page == "Training":
     st.title(f"Training Controls - {selected_mineral}")
     st.write(f"Start training runs for {selected_mineral} deposit prediction models.")
+
+    # Continuous Training Dashboard
+    st.subheader("📊 Continuous Training Dashboard")
+    
+    # Note: Auto-refresh is disabled to prevent page reset issues
+    # The dashboard updates when you manually refresh the page
+    
+    # Load trainer state if it exists
+    import json
+    import psutil
+    import os
+    
+    trainer_state_file = 'continuous_trainer_state.json'
+    if os.path.exists(trainer_state_file):
+        try:
+            with open(trainer_state_file, 'r') as f:
+                trainer_state = json.load(f)
+            
+            # Display training metrics
+            col1, col2, col3, col4, col5 = st.columns(5)
+            
+            with col1:
+                run_count = trainer_state.get('run_count', 0)
+                st.metric("Total Training Runs", run_count)
+            
+            with col2:
+                # Training iterations from session state
+                training_iters = st.session_state.get('training_iterations', 0)
+                st.metric("Training Iterations", training_iters)
+            
+            with col3:
+                best_scores = trainer_state.get('best_scores', {})
+                if best_scores:
+                    best_overall = max(best_scores.values()) if best_scores else 0
+                    st.metric("Best AUC Score", f"{best_overall:.4f}")
+                else:
+                    st.metric("Best AUC Score", "N/A")
+            
+            with col4:
+                # Count successful runs from history
+                run_history = trainer_state.get('run_history', [])
+                successful_runs = len([r for r in run_history if r.get('success')])
+                st.metric("Successful Runs", successful_runs)
+            
+            with col5:
+                # System resources
+                memory = psutil.virtual_memory()
+                memory_pct = memory.percent
+                st.metric("Memory Usage", f"{memory_pct:.1f}%")
+            
+            # Best scores by mineral
+            st.subheader("🏆 Best Scores by Mineral")
+            if best_scores:
+                score_cols = st.columns(len(best_scores))
+                for idx, (mineral, score) in enumerate(best_scores.items()):
+                    with score_cols[idx]:
+                        st.metric(f"{mineral}", f"{score:.4f}")
+            
+            # Recent training history
+            if run_history:
+                st.subheader("📈 Recent Training History")
+                import pandas as pd
+                
+                # Convert to DataFrame for display
+                recent_runs = run_history[-10:]  # Last 10 runs
+                df = pd.DataFrame(recent_runs)
+                
+                if not df.empty:
+                    # Format the display
+                    if 'score' in df.columns:
+                        df['score'] = df['score'].apply(lambda x: f"{x:.4f}" if x else "N/A")
+                    if 'duration' in df.columns:
+                        df['duration'] = df['duration'].apply(lambda x: f"{x:.1f}s" if x else "N/A")
+                    
+                    st.dataframe(df[['run', 'mineral', 'success', 'score', 'duration']], use_container_width=True)
+                
+                # Progress bar for recent runs
+                st.subheader("🔄 Training Progress")
+                recent_success = [r.get('success', False) for r in run_history[-20:]]
+                if recent_success:
+                    success_rate = sum(recent_success) / len(recent_success)
+                    st.progress(success_rate, text=f"Success Rate (last 20 runs): {success_rate*100:.1f}%")
+            
+            # Training status indicator
+            st.subheader("⏱️ Training Status")
+            timestamp = trainer_state.get('timestamp', 'Unknown')
+            st.text(f"Last Update: {timestamp}")
+            
+        except Exception as e:
+            st.warning(f"Could not load training state: {e}")
+    else:
+        st.info("No continuous training data found. Start training to see progress here.")
+    
+    st.divider()
 
     # Continuous Learning Mode
     st.subheader("🚀 Continuous Learning Mode")
@@ -179,56 +273,88 @@ elif page == "Training":
 
             st.write(f"🏃 Running training iteration #{training_count}...")
 
-            # Run the train_model.py script with mineral parameter
-            import subprocess
-            result = subprocess.run(['python3', 'train_model.py', str(100), training_mineral], capture_output=True, text=True, cwd='.')
-
-            if result.returncode == 0:
-                st.success(f"✅ Training iteration #{training_count} completed successfully!")
-
-                # Extract and display metrics
-                lines = result.stdout.split('\n')
-                auc_line = next((line for line in lines if 'Test AUC:' in line), None)
-                acc_line = next((line for line in lines if 'Test Accuracy:' in line), None)
-
-                col1, col2 = st.columns(2)
-                if auc_line:
-                    auc = auc_line.split('Test AUC:')[1].strip()
-                    col1.metric("Test AUC", auc)
-                if acc_line:
-                    acc = acc_line.split('Test Accuracy:')[1].strip()
-                    col2.metric("Test Accuracy", acc)
-
-                st.info("🎯 Model improved! Next iteration starting automatically...")
-
-                # Check if continuous learning is still enabled before continuing
-                if st.session_state.get('continuous_learning', False):
-                    import time
-                    time.sleep(3)  # Brief pause between iterations
-                    st.rerun()  # Automatically trigger next iteration
-                else:
+            # Run training using the proper pipeline
+            try:
+                # Find data files for the mineral
+                mineral_lower = training_mineral.lower()
+                features_file = f'data/{mineral_lower}_complete_real.csv'
+                deposits_file = f'data/{mineral_lower}_deposits.csv'
+                
+                # Check if files exist, try alternatives
+                if not os.path.exists(features_file):
+                    # Try alternative file patterns
+                    alternatives = [
+                        f'data/{mineral_lower}_grid_with_features.csv',
+                        f'data/features/{mineral_lower}_features.parquet'
+                    ]
+                    for alt in alternatives:
+                        if os.path.exists(alt):
+                            features_file = alt
+                            break
+                
+                if not os.path.exists(features_file):
+                    st.error(f"❌ No training data found for {training_mineral}. Please upload data first.")
                     st.session_state['auto_training_active'] = False
-                    st.warning("Continuous learning was disabled - stopping perpetual training.")
-
-            else:
+                else:
+                    # Run the training pipeline
+                    with st.spinner(f"Training iteration #{training_count}..."):
+                        result = run_training_pipeline(features_file, deposits_file, mineral=training_mineral)
+                    
+                    st.success(f"✅ Training iteration #{training_count} completed successfully!")
+                    
+                    # Extract metrics from result string
+                    import re
+                    auc_match = re.search(r'AUC[:\s]+([0-9.]+)', result)
+                    if auc_match:
+                        col1, col2 = st.columns(2)
+                        col1.metric("AUC Score", auc_match.group(1))
+                    
+                    st.info("🎯 Training completed! Next iteration starting automatically...")
+                    
+                    # Check if continuous learning is still enabled before continuing
+                    if st.session_state.get('continuous_learning', False):
+                        import time
+                        time.sleep(3)  # Brief pause between iterations
+                        st.rerun()  # Automatically trigger next iteration
+                    else:
+                        st.session_state['auto_training_active'] = False
+                        st.warning("Continuous learning was disabled - stopping perpetual training.")
+                    
+            except Exception as e:
                 st.error(f"❌ Training iteration #{training_count} failed!")
-                st.code(result.stderr)
+                st.error(f"Error: {str(e)}")
                 st.session_state['auto_training_active'] = False
-                st.error("Stopping perpetual training due to failure.")
     else:
         if st.button("Train on Existing Pre-split Data"):
             with st.spinner("Training on existing data..."):
-                # Run the train_model.py script
-                import subprocess
-                result = subprocess.run(['python3', 'train_model.py', '100', training_mineral], capture_output=True, text=True, cwd='.')
-                if result.returncode == 0:
-                    st.success("Model trained successfully on existing data!")
-                    st.text("Output:")
-                    st.code(result.stdout)
-                else:
+                try:
+                    # Find data files for the mineral
+                    mineral_lower = training_mineral.lower()
+                    features_file = f'data/{mineral_lower}_complete_real.csv'
+                    deposits_file = f'data/{mineral_lower}_deposits.csv'
+                    
+                    # Check if files exist, try alternatives
+                    if not os.path.exists(features_file):
+                        alternatives = [
+                            f'data/{mineral_lower}_grid_with_features.csv',
+                            f'data/features/{mineral_lower}_features.parquet'
+                        ]
+                        for alt in alternatives:
+                            if os.path.exists(alt):
+                                features_file = alt
+                                break
+                    
+                    if not os.path.exists(features_file):
+                        st.error(f"No training data found for {training_mineral}. Please upload data first.")
+                    else:
+                        result = run_training_pipeline(features_file, deposits_file, mineral=training_mineral)
+                        st.success("Model trained successfully on existing data!")
+                        st.text("Output:")
+                        st.code(result)
+                except Exception as e:
                     st.error("Training failed!")
                     st.text("Error:")
-                    st.code(result.stderr)
+                    st.code(str(e))
             st.write("Training completed. Check Statistics Dashboard for details.")
 
     st.subheader("Training on Uploaded Data")
@@ -347,7 +473,7 @@ elif page == "Prediction":
     # Conversion tool
     st.subheader("Convert Spatial Data to CSV")
     st.write("Convert shapefiles or GeoJSON to CSV format with lat/lon coordinates for prediction.")
-    convert_file = st.file_uploader("Upload shapefile or GeoJSON to convert", type=['shp', 'zip', 'geojson'], key='convert')
+    convert_file = st.file_uploader("Upload shapefile or GeoJSON to convert", type=['shp', 'zip', 'geojson', 'json'], key='convert')
     if convert_file and st.button("Convert to CSV"):
         with st.spinner("Converting..."):
             # Save uploaded file temporarily
@@ -390,7 +516,7 @@ elif page == "Prediction":
             os.unlink(input_path)
 
     st.subheader("Run Prediction")
-    prediction_file = st.file_uploader("Upload prediction data (CSV, shapefile, or GeoJSON)", type=['csv', 'shp', 'zip', 'geojson'])
+    prediction_file = st.file_uploader("Upload prediction data (CSV, shapefile, or GeoJSON)", type=['csv', 'shp', 'zip', 'geojson', 'json'])
     if selected_mineral == "All Minerals":
         available_models = get_models()
     else:
@@ -404,7 +530,7 @@ elif page == "Prediction":
             if prediction_file.name.endswith('.csv'):
                 file_type = 'csv'
                 suffix = '.csv'
-            elif prediction_file.name.endswith('.geojson'):
+            elif prediction_file.name.endswith('.geojson') or prediction_file.name.endswith('.json'):
                 file_type = 'geojson'
                 suffix = '.geojson'
             else:

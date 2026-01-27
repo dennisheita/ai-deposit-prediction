@@ -276,9 +276,29 @@ def save_geoparquet(data, filename, directory='data/features/', mineral=None):
     insert_file(filename, 'geoparquet', 'uploaded', path, mineral)
 
 def load_geoparquet(filename, directory='data/features/'):
-    """Load a GeoDataFrame from GeoParquet, GeoJSON, or CSV format."""
-    path = os.path.join(directory, filename)
-    if filename.endswith('.parquet'):
+    """Load a GeoDataFrame from GeoParquet, GeoJSON, or CSV format.
+    First tries the specified directory, then checks temp directory, then data root.
+    Also handles full paths passed as filename.
+    """
+    # Check if filename is already a full path
+    if os.path.exists(filename):
+        path = filename
+    else:
+        path = os.path.join(directory, filename)
+    
+    # If file not found in specified directory, check other locations
+    if not os.path.exists(path):
+        # Check temp directory
+        temp_path = os.path.join('data/temp', filename)
+        if os.path.exists(temp_path):
+            path = temp_path
+        # Check data root directory
+        elif os.path.exists(os.path.join('data', filename)):
+            path = os.path.join('data', filename)
+        else:
+            raise FileNotFoundError(f"File not found: {filename} in {directory}, data/temp/, or data/")
+    
+    if filename.endswith('.parquet') or filename.endswith('.geoparquet'):
         try:
             return gpd.read_parquet(path)
         except Exception:
@@ -288,8 +308,19 @@ def load_geoparquet(filename, directory='data/features/'):
         return gpd.read_file(path)
     elif filename.endswith('.csv'):
         df = pd.read_csv(path)
-        if 'lat' in df.columns and 'lon' in df.columns:
-            return gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['lon'], df['lat']), crs='EPSG:4326')
+        # Check for various lat/lon column naming conventions
+        lat_col = None
+        lon_col = None
+        
+        # Common latitude column names
+        for col in df.columns:
+            if col.lower() in ['lat', 'latitude']:
+                lat_col = col
+            if col.lower() in ['lon', 'longitude', 'lng', 'long']:
+                lon_col = col
+        
+        if lat_col and lon_col:
+            return gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[lon_col], df[lat_col]), crs='EPSG:4326')
         else:
             # Return regular DataFrame if no spatial columns
             return df

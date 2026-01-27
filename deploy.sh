@@ -23,25 +23,29 @@ else
     exit 1
 fi
 
-echo "📦 Building Docker image..."
+echo "📦 Building all Docker images (Frontend, Backend, Dashboard)..."
 $DOCKER_COMPOSE_CMD build
 
-echo "🏃 Starting the application..."
+echo "🏃 Starting all services..."
 $DOCKER_COMPOSE_CMD up -d
 
-echo "⏳ Waiting for application to start..."
-sleep 10
+echo "⏳ Waiting for services to initialize..."
+sleep 15
 
-# Check if the application is running
-if curl -f http://localhost:8501/healthz &> /dev/null; then
-    echo "✅ Application is running successfully!"
-    echo "🌐 Access the application at: http://localhost:8501"
+# Check if the Main UI is running
+if curl -f http://localhost:3000 &> /dev/null; then
+    echo "✅ AI Deposit Prediction System is LIVE!"
+    echo "------------------------------------------------"
+    echo "📊 Main UI:        http://localhost:3000"
+    echo "⚙️  Dashboard:      http://localhost:8501"
+    echo "🔌 API Backend:    http://localhost:8000/health"
+    echo "------------------------------------------------"
     echo ""
     echo "📋 Useful commands:"
     echo "  • View logs: $DOCKER_COMPOSE_CMD logs -f"
-    echo "  • Stop application: $DOCKER_COMPOSE_CMD down"
-    echo "  • Restart application: $DOCKER_COMPOSE_CMD restart"
+    echo "  • Stop app:  $DOCKER_COMPOSE_CMD down"
+    echo "  • Restart:   $DOCKER_COMPOSE_CMD restart"
 else
-    echo "❌ Application failed to start. Check logs with: $DOCKER_COMPOSE_CMD logs"
+    echo "❌ Some services failed to start. Check logs with: $DOCKER_COMPOSE_CMD logs"
     exit 1
 fi

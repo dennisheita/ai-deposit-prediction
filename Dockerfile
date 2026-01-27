@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     libgeos-dev \
     libproj-dev \
     proj-bin \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Set GDAL environment variables
