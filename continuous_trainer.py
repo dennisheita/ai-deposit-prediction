@@ -190,11 +190,21 @@ class ContinuousTrainer:
             logger.warning(f"Memory limit exceeded: {memory_gb:.1f}GB > {self.memory_limit_gb}GB")
             return False
         
-        # Check disk
-        disk = psutil.disk_usage(MODELS_DIR)
-        disk_gb = disk.used / (1024 ** 3)
+        # Check disk - only check the models directory usage, not entire disk
+        if os.path.exists(MODELS_DIR):
+            # Calculate actual usage of models directory only
+            total_size = 0
+            for dirpath, dirnames, filenames in os.walk(MODELS_DIR):
+                for f in filenames:
+                    fp = os.path.join(dirpath, f)
+                    if os.path.exists(fp):
+                        total_size += os.path.getsize(fp)
+            disk_gb = total_size / (1024 ** 3)
+        else:
+            disk_gb = 0
+        
         if disk_gb > self.disk_limit_gb:
-            logger.warning(f"Disk limit exceeded: {disk_gb:.1f}GB > {self.disk_limit_gb}GB")
+            logger.warning(f"Models directory size limit exceeded: {disk_gb:.1f}GB > {self.disk_limit_gb}GB")
             return False
         
         return True
@@ -263,7 +273,7 @@ class ContinuousTrainer:
         
         # Try different file patterns
         possible_files = [
-            (f'data/{mineral_lower}_complete_real.csv', f'data/{mineral_lower}_deposits.csv'),
+            (f'data/{mineral_lower}_complete_real.csv', f'data/{mineral_lower}_complete_real.csv'),
             (f'data/{mineral_lower}_grid_with_features.csv', f'data/{mineral_lower}_deposits.csv'),
             (f'data/features/{mineral_lower}_features.parquet', f'data/deposits/{mineral_lower}_deposits.geojson'),
         ]
@@ -272,8 +282,8 @@ class ContinuousTrainer:
             if os.path.exists(features_file):
                 return features_file, deposits_file
         
-        # Default fallback
-        return f'data/{mineral_lower}_complete_real.csv', f'data/{mineral_lower}_deposits.csv'
+        # Default fallback - use the same file for both features and deposits
+        return f'data/{mineral_lower}_complete_real.csv', f'data/{mineral_lower}_complete_real.csv'
     
     def _run_single_training(self, config: TrainingConfig) -> TrainingResult:
         """Execute a single training run"""
@@ -380,6 +390,11 @@ class ContinuousTrainer:
         logger.info(f"Target minerals: {self.minerals}")
         logger.info(f"Press Ctrl+C to stop gracefully")
         
+        print("🚀 Starting continuous training", flush=True)
+        print(f"🎯 Target minerals: {', '.join(self.minerals)}", flush=True)
+        print(f"⚙️  Mode: {self.mode}", flush=True)
+        print("⏹️  Press Ctrl+C to stop gracefully\n", flush=True)
+        
         try:
             while not self._should_stop():
                 # Cycle through minerals
@@ -387,9 +402,14 @@ class ContinuousTrainer:
                     if self._should_stop():
                         break
                     
+                    print(f"\n🪨 Training mineral: {mineral} (Run #{self.run_count + 1})", flush=True)
+                    
                     # Generate configuration
                     features_file, deposits_file = self._get_data_files(mineral)
+                    print(f"   📁 Features: {features_file}", flush=True)
+                    
                     hyperparams = self._generate_hyperparams(mineral)
+                    print(f"   🔧 Hyperparams: {hyperparams}", flush=True)
                     
                     config = TrainingConfig(
                         mineral=mineral,
@@ -400,6 +420,7 @@ class ContinuousTrainer:
                         timestamp=datetime.datetime.now().isoformat()
                     )
                     
+                    print(f"   ⚙️  Running {self.mode} pipeline...", flush=True)
                     # Run training
                     result = self._run_single_training(config)
                     self.run_count += 1
@@ -407,6 +428,9 @@ class ContinuousTrainer:
                     # Update tracking
                     if result.success and result.score:
                         self._update_best_score(mineral, result.score)
+                        print(f"   ✅ Finished {mineral} - Score: {result.score:.4f} (Duration: {result.duration:.1f}s)", flush=True)
+                    else:
+                        print(f"   ❌ Failed {mineral} - Error: {result.error}", flush=True)
                     
                     # Record history
                     self.run_history.append({
@@ -427,17 +451,23 @@ class ContinuousTrainer:
                     if self.run_count % 10 == 0:
                         self._save_state()
                         self._print_summary()
+                        print(f"\n📊 Progress: {self.run_count} runs completed", flush=True)
+                        print(f"🏆 Best scores: {self.best_scores}", flush=True)
                     
                     # Small delay between runs
                     time.sleep(1)
         
         except Exception as e:
             logger.error(f"Unexpected error in training loop: {e}")
+            print(f"\n💥 Error: {e}", flush=True)
         
         finally:
             self._save_state()
             self._print_summary()
             logger.info("Continuous training stopped")
+            print("\n🛑 Continuous training stopped", flush=True)
+            print(f"📈 Total runs: {self.run_count}", flush=True)
+            print(f"🏆 Best scores: {self.best_scores}", flush=True)
     
     def _print_summary(self):
         """Print training summary"""

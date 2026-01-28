@@ -6,17 +6,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: backend
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
-    command: uvicorn api:app --host 0.0.0.0 --port 8000 --workers 4
-    restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
       - ENVIRONMENT=production
+    restart: unless-stopped
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
@@ -25,11 +25,17 @@ services:
       start_period: 40s
     networks:
       - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
 
   dashboard:
     build:
       context: .
       dockerfile: Dockerfile
+      target: dashboard
     ports:
       - "8501:8501"
     volumes:
@@ -41,7 +47,6 @@ services:
       - STREAMLIT_SERVER_PORT=8501
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
       - PYTHONUNBUFFERED=1
-    command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8501/healthz" ]
@@ -51,6 +56,11 @@ services:
       start_period: 40s
     networks:
       - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
 
   frontend:
     build:
@@ -72,7 +82,17 @@ services:
       start_period: 40s
     networks:
       - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
 
 networks:
   app-network:
     driver: bridge
+
+volumes:
+  data:
+  models:
+  logs:

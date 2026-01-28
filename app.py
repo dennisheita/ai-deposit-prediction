@@ -55,6 +55,7 @@ page = st.sidebar.selectbox("Choose a section", [
     "Prediction",
     "Map Visualization",
     "Batch Processing",
+    "Perpetual Training",
     "Model Comparison",
     "Download Center",
     "Data Management"
@@ -215,13 +216,55 @@ elif page == "Training":
 
     continuous_learning = st.checkbox("Enable Continuous Learning", value=st.session_state.get('continuous_learning', False))
     st.session_state['continuous_learning'] = continuous_learning
+    
     if continuous_learning:
         st.info("✅ Continuous learning enabled. The model will be retrained automatically when you upload new data in the Data Upload section.")
-        st.write("**How it works:**")
-        st.write("1. Upload new features or deposits data")
-        st.write("2. The system automatically retrains using all available data")
-        st.write("3. New model replaces the old one")
-        st.write("4. Check Statistics Dashboard for updated performance")
+        
+        # Expanded information section
+        with st.expander("📖 How Perpetual Training Works", expanded=True):
+            st.write("""
+            **What is Perpetual Training?**
+            
+            Perpetual training continuously optimizes your models by running multiple training iterations
+            with different hyperparameters. The system automatically finds the best configuration for your data.
+            
+            **The Training Pipeline:**
+            1. **Data Loading** - Loads features and deposit data from CSV files
+            2. **Negative Sampling** - Creates balanced training sets with spatial negative sampling
+            3. **Cross-Validation** - Uses GroupKFold for spatial cross-validation (prevents data leakage)
+            4. **Hyperparameter Tuning** - GridSearchCV tests 144+ parameter combinations
+            5. **Model Training** - Trains Random Forest with optimal parameters
+            6. **Evaluation** - Calculates AUC, accuracy, and other metrics
+            7. **Model Saving** - Saves the best model to the database
+            
+            **What Happens During Each Iteration:**
+            - The system tests different numbers of trees (n_estimators: 100, 500, 1000, 2000)
+            - Different tree depths (max_depth: 10, 20, 30, 50)
+            - Various split criteria (min_samples_split, min_samples_leaf)
+            - Selects the best combination based on AUC score
+            
+            **Why This Matters:**
+            - More trees = better performance but slower training
+            - Deeper trees = capture complex patterns but risk overfitting
+            - Cross-validation ensures model generalizes to new areas
+            - AUC score of 1.0 = perfect predictions (0.9+ is excellent)
+            """)
+            
+            st.subheader("🔧 Technical Details")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Algorithm:**")
+                st.write("- Random Forest Classifier")
+                st.write("- GridSearchCV for tuning")
+                st.write("- GroupKFold (k=10) for CV")
+                st.write("- Spatial negative sampling")
+            with col2:
+                st.write("**Parameters Tested:**")
+                st.write("- n_estimators: 4 options")
+                st.write("- max_depth: 4 options")
+                st.write("- min_samples_split: 3 options")
+                st.write("- min_samples_leaf: 3 options")
+                st.write("- **Total: 144 combinations**")
 
     # Mineral for this training run
     if selected_mineral == "All Minerals":
@@ -278,7 +321,7 @@ elif page == "Training":
                 # Find data files for the mineral
                 mineral_lower = training_mineral.lower()
                 features_file = f'data/{mineral_lower}_complete_real.csv'
-                deposits_file = f'data/{mineral_lower}_deposits.csv'
+                deposits_file = f'data/{mineral_lower}_complete_real.csv'  # Same file contains both features and deposits
                 
                 # Check if files exist, try alternatives
                 if not os.path.exists(features_file):
@@ -290,24 +333,79 @@ elif page == "Training":
                     for alt in alternatives:
                         if os.path.exists(alt):
                             features_file = alt
+                            deposits_file = alt
                             break
                 
                 if not os.path.exists(features_file):
                     st.error(f"❌ No training data found for {training_mineral}. Please upload data first.")
                     st.session_state['auto_training_active'] = False
                 else:
+                    # Show detailed training information
+                    with st.expander(f"📊 Training Iteration #{training_count} Details", expanded=True):
+                        st.write(f"**Training Mineral:** {training_mineral}")
+                        st.write(f"**Features File:** {features_file}")
+                        st.write(f"**Data Shape:** Loading...")
+                        
+                        # Load and show data info
+                        try:
+                            import pandas as pd
+                            df = pd.read_csv(features_file)
+                            st.write(f"**Total Samples:** {len(df):,}")
+                            st.write(f"**Features:** {len(df.columns)} columns")
+                            
+                            # Check for mineral-specific label columns
+                            label_col = None
+                            if f'{mineral_lower}_present' in df.columns:
+                                label_col = f'{mineral_lower}_present'
+                            elif 'label' in df.columns:
+                                label_col = 'label'
+                            
+                            if label_col:
+                                positive_count = df[label_col].sum()
+                                st.write(f"**Positive Samples (Deposits):** {positive_count}")
+                                st.write(f"**Negative Samples:** {len(df) - positive_count}")
+                                st.write(f"**Class Balance:** {positive_count/(len(df)-positive_count)*100:.2f}% positive")
+                        except Exception as e:
+                            st.warning(f"Could not load data preview: {e}")
+                    
                     # Run the training pipeline
                     with st.spinner(f"Training iteration #{training_count}..."):
                         result = run_training_pipeline(features_file, deposits_file, mineral=training_mineral)
                     
                     st.success(f"✅ Training iteration #{training_count} completed successfully!")
                     
-                    # Extract metrics from result string
+                    # Extract and display detailed metrics
                     import re
                     auc_match = re.search(r'AUC[:\s]+([0-9.]+)', result)
-                    if auc_match:
-                        col1, col2 = st.columns(2)
-                        col1.metric("AUC Score", auc_match.group(1))
+                    accuracy_match = re.search(r'Accuracy[:\s]+([0-9.]+)', result, re.IGNORECASE)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        if auc_match:
+                            auc_val = float(auc_match.group(1))
+                            st.metric("AUC Score", f"{auc_val:.4f}", delta="Excellent" if auc_val > 0.9 else "Good" if auc_val > 0.8 else "Fair")
+                    with col2:
+                        if accuracy_match:
+                            acc_val = float(accuracy_match.group(1))
+                            st.metric("Accuracy", f"{acc_val:.4f}")
+                    with col3:
+                        st.metric("Iteration", training_count)
+                    
+                    # Show what was tested
+                    with st.expander("🔍 What Was Tested in This Iteration"):
+                        st.write("""
+                        **Grid Search Configuration:**
+                        - **n_estimators:** 100, 500, 1000, 2000 (number of trees)
+                        - **max_depth:** 10, 20, 30, 50 (tree depth)
+                        - **min_samples_split:** 2, 5, 10 (minimum samples to split)
+                        - **min_samples_leaf:** 1, 2, 4 (minimum samples in leaf)
+                        
+                        **Total Combinations:** 144 different models trained and evaluated
+                        
+                        **Cross-Validation:** 10-fold GroupKFold (spatial CV to prevent data leakage)
+                        
+                        **Selection Criteria:** Best AUC score across all folds
+                        """)
                     
                     st.info("🎯 Training completed! Next iteration starting automatically...")
                     
@@ -331,7 +429,7 @@ elif page == "Training":
                     # Find data files for the mineral
                     mineral_lower = training_mineral.lower()
                     features_file = f'data/{mineral_lower}_complete_real.csv'
-                    deposits_file = f'data/{mineral_lower}_deposits.csv'
+                    deposits_file = f'data/{mineral_lower}_complete_real.csv'  # Same file contains both features and deposits
                     
                     # Check if files exist, try alternatives
                     if not os.path.exists(features_file):
@@ -342,6 +440,7 @@ elif page == "Training":
                         for alt in alternatives:
                             if os.path.exists(alt):
                                 features_file = alt
+                                deposits_file = alt
                                 break
                     
                     if not os.path.exists(features_file):
@@ -969,6 +1068,100 @@ elif page == "Batch Processing":
                 # Show all results
                 for res in results:
                     st.write(res)
+
+# Perpetual Training Section
+elif page == "Perpetual Training":
+    st.title(f"⚡ Perpetual Training - {selected_mineral}")
+    st.write("Run continuous model training with automatic hyperparameter optimization using Optuna.")
+    
+    import subprocess
+    import threading
+    import time
+    
+    # Initialize session state for training status
+    if 'training_active' not in st.session_state:
+        st.session_state.training_active = False
+    if 'training_output' not in st.session_state:
+        st.session_state.training_output = []
+    if 'training_process' not in st.session_state:
+        st.session_state.training_process = None
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Training Status")
+        status = "🟢 Running" if st.session_state.training_active else "⚪ Idle"
+        st.write(f"**Status:** {status}")
+        
+        if st.session_state.training_active:
+            st.write("⏳ Training in progress... Check the terminal for live output.")
+    
+    with col2:
+        st.subheader("Controls")
+        
+        # Determine which mineral to train
+        if selected_mineral == "All Minerals":
+            train_mineral = "Gold"  # Default when All Minerals selected
+            st.info(f"Training for default mineral: {train_mineral} (select a specific mineral to train others)")
+        else:
+            train_mineral = selected_mineral
+        
+        if st.button("🚀 Start Perpetual Training", disabled=st.session_state.training_active):
+            st.session_state.training_active = True
+            st.session_state.training_output = []
+            
+            def run_training():
+                try:
+                    process = subprocess.Popen(
+                        ['python3', 'continuous_trainer.py', '--max-runs', '5', '--minerals', train_mineral],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        cwd='.'
+                    )
+                    st.session_state.training_process = process
+                    
+                    for line in process.stdout:
+                        st.session_state.training_output.append(line.strip())
+                    
+                    process.wait()
+                except Exception as e:
+                    st.session_state.training_output.append(f"Error: {str(e)}")
+                finally:
+                    st.session_state.training_active = False
+                    st.session_state.training_process = None
+            
+            threading.Thread(target=run_training, daemon=True).start()
+            st.success(f"Training started for {train_mineral}! Check terminal for output.")
+            time.sleep(1)
+            st.rerun()
+        
+        if st.button("🛑 Stop Training", disabled=not st.session_state.training_active):
+            if st.session_state.training_process:
+                st.session_state.training_process.terminate()
+                st.session_state.training_process = None
+            st.session_state.training_active = False
+            st.warning("Training stopped.")
+            time.sleep(1)
+            st.rerun()
+    
+    st.subheader("What This Does")
+    st.write("""
+    When you start perpetual training:
+    1. Runs `python3 continuous_trainer.py --max-runs 5 --minerals <selected>`
+    2. Performs 5 training iterations with Optuna hyperparameter optimization
+    3. Trains XGBoost, LightGBM, and Random Forest models
+    4. Creates ensemble models via voting classifier
+    5. Saves best models to the database
+    
+    **Note:** Training output appears in the terminal where Streamlit is running.
+    """)
+    
+    # Show recent output
+    if st.session_state.training_output:
+        st.subheader("Recent Output")
+        output_text = "\n".join(st.session_state.training_output[-20:])
+        st.code(output_text, language="bash")
 
 # Model Comparison
 elif page == "Model Comparison":

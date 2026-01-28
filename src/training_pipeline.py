@@ -45,10 +45,9 @@ def stratified_spatial_negative_sampling(positives_gdf, features_gdf, n_negative
             )
         else:
             logging.error("Cannot perform spatial negative sampling: no geometry or lat/lon columns found.")
-            # Return empty GeoDataFrame with label column - need to include geometry column
-            cols = features_gdf.columns.tolist() + ['label', 'geometry']
-            empty_gdf = gpd.GeoDataFrame(columns=cols, crs='EPSG:4326')
-            return empty_gdf
+            # Return empty DataFrame with label column instead of GeoDataFrame
+            empty_df = pd.DataFrame(columns=list(features_gdf.columns) + ['label'])
+            return empty_df
 
     # Exclude areas within min_distance of positives
     try:
@@ -66,9 +65,9 @@ def stratified_spatial_negative_sampling(positives_gdf, features_gdf, n_negative
 
     if len(candidates) == 0:
         logging.error("No candidates available for negative sampling at all.")
-        cols = features_gdf.columns.tolist() + ['label', 'geometry']
-        empty_gdf = gpd.GeoDataFrame(columns=cols, crs=features_gdf.crs if hasattr(features_gdf, 'crs') else 'EPSG:4326')
-        return empty_gdf
+        # Return empty DataFrame with label column instead of GeoDataFrame
+        empty_df = pd.DataFrame(columns=list(features_gdf.columns) + ['label'])
+        return empty_df
 
     # Try stratified sampling if strata column exists and has valid data
     if strata_cols and strata_cols[0] in candidates.columns:
@@ -199,9 +198,16 @@ def run_training_pipeline(features_file, deposits_file, mineral=None, n_negative
                  positives['label'] = 1
                  negatives = stratified_spatial_negative_sampling(positives, features_gdf, n_negatives_per_positive)
                  train_data = pd.concat([positives, negatives], ignore_index=True)
-                 X = train_data.drop(columns=['label', 'geometry'])
+                 # Only drop geometry if it exists
+                 cols_to_drop = ['label']
+                 if 'geometry' in train_data.columns:
+                     cols_to_drop.append('geometry')
+                 X = train_data.drop(columns=cols_to_drop)
                  y = train_data['label']
-                 coords = np.array([[geom.centroid.x, geom.centroid.y] if hasattr(geom, 'centroid') else [geom.x, geom.y] for geom in train_data.geometry])
+                 if 'geometry' in train_data.columns and hasattr(train_data, 'geometry'):
+                     coords = np.array([[geom.centroid.x, geom.centroid.y] if hasattr(geom, 'centroid') else [geom.x, geom.y] for geom in train_data.geometry])
+                 else:
+                     coords = np.zeros((len(train_data), 2))
         else:
             # Standard flow
             positives = deposits_gdf.copy()
@@ -215,20 +221,27 @@ def run_training_pipeline(features_file, deposits_file, mineral=None, n_negative
             if len(negatives) == 0:
                 raise ValueError("No negative samples generated. Cannot train model.")
             
-            X = train_data.drop(columns=['label', 'geometry'])
+            # Only drop geometry if it exists
+            cols_to_drop = ['label']
+            if 'geometry' in train_data.columns:
+                cols_to_drop.append('geometry')
+            X = train_data.drop(columns=cols_to_drop)
             y = train_data['label']
             
-            # Handle case where geometry might be None
+            # Handle case where geometry might be None or not exist
             coords_list = []
-            for geom in train_data.geometry:
-                if geom is not None and hasattr(geom, 'x'):
-                    coords_list.append([geom.x, geom.y])
-                elif geom is not None and hasattr(geom, 'centroid'):
-                    coords_list.append([geom.centroid.x, geom.centroid.y])
-                else:
-                    # Fallback: use random coordinates or zeros
-                    coords_list.append([0.0, 0.0])
-            coords = np.array(coords_list)
+            if 'geometry' in train_data.columns and hasattr(train_data, 'geometry'):
+                for geom in train_data.geometry:
+                    if geom is not None and hasattr(geom, 'x'):
+                        coords_list.append([geom.x, geom.y])
+                    elif geom is not None and hasattr(geom, 'centroid'):
+                        coords_list.append([geom.centroid.x, geom.centroid.y])
+                    else:
+                        # Fallback: use random coordinates or zeros
+                        coords_list.append([0.0, 0.0])
+                coords = np.array(coords_list)
+            else:
+                coords = np.zeros((len(train_data), 2))
 
         logging.info(f"Training data: {len(train_data)} samples, {sum(y)} positives, {len(y) - sum(y)} negatives.")
 

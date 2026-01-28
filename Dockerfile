@@ -1,5 +1,6 @@
-# Use Python 3.9 slim image as base
-FROM python:3.9-slim
+# Multi-stage Dockerfile for AI Deposit Prediction System
+# Stage 1: Base image with common dependencies
+FROM python:3.9-slim AS base
 
 # Set working directory
 WORKDIR /app
@@ -33,6 +34,26 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p data/features data/deposits data/predictions models logs
 
+# Stage 2: Backend service (FastAPI)
+FROM base AS backend
+
+# Expose the port FastAPI runs on
+EXPOSE 8000
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV ENVIRONMENT=production
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the FastAPI application
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Stage 3: Dashboard service (Streamlit)
+FROM base AS dashboard
+
 # Expose the port Streamlit runs on
 EXPOSE 8501
 
@@ -40,10 +61,11 @@ EXPOSE 8501
 ENV STREAMLIT_SERVER_HEADLESS=true
 ENV STREAMLIT_SERVER_PORT=8501
 ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
+ENV PYTHONUNBUFFERED=1
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8501/healthz || exit 1
 
-# Run the application
+# Run the Streamlit application
 CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]

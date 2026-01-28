@@ -32,6 +32,7 @@ const SidebarContent = () => {
     { href: '/prediction', label: '🔮 Run Prediction' },
     { href: '/map', label: '🗺️ Map Visualization' },
     { href: '/stats', label: '📊 Statistics Dashboard' },
+    { href: '/batch', label: '⚡ Perpetual Training' },
     { href: '/download', label: '📥 Download Results' },
   ]
 

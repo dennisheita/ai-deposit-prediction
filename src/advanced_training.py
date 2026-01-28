@@ -51,8 +51,9 @@ def stratified_spatial_negative_sampling(positives_gdf, features_gdf, n_negative
             )
         else:
             logging.error("Cannot perform spatial negative sampling: no geometry or lat/lon columns found.")
-            empty_gdf = gpd.GeoDataFrame(columns=features_gdf.columns.tolist() + ['label'], crs='EPSG:4326')
-            return empty_gdf
+            # Return a regular DataFrame with label column instead of empty GeoDataFrame
+            empty_df = pd.DataFrame(columns=list(features_gdf.columns) + ['label'])
+            return empty_df
 
     # Exclude areas within min_distance of positives (if min_distance > 0)
     try:
@@ -74,8 +75,9 @@ def stratified_spatial_negative_sampling(positives_gdf, features_gdf, n_negative
     
     if len(candidates) == 0:
         logging.error("No candidates available for negative sampling at all.")
-        empty_gdf = gpd.GeoDataFrame(columns=features_gdf.columns.tolist() + ['label'], crs='EPSG:4326')
-        return empty_gdf
+        # Return a regular DataFrame with label column instead of empty GeoDataFrame
+        empty_df = pd.DataFrame(columns=list(features_gdf.columns) + ['label'])
+        return empty_df
 
     # Try stratified sampling if strata column exists and has valid numeric data
     if strata_cols and strata_cols[0] in candidates.columns:
@@ -275,7 +277,7 @@ def log_metrics(metrics, log_path=os.path.join(LOGS_DIR, 'advanced_training.log'
     """Log training metrics"""
     logging.info(f"Training metrics: {metrics}")
 
-def run_advanced_training_pipeline(features_file, deposits_file, mineral=None, n_negatives_per_positive=1, k=10, n_trials=50):
+def run_advanced_training_pipeline(features_file, deposits_file, mineral=None, n_negatives_per_positive=1, k=10, n_trials=50, min_distance=0):
     """Main advanced training pipeline with multiple models and ensemble"""
     logging.info("Starting advanced training pipeline.")
     
@@ -294,8 +296,11 @@ def run_advanced_training_pipeline(features_file, deposits_file, mineral=None, n
                 features_gdf = gpd.read_file(features_file)
             elif features_file.endswith('.csv'):
                 df = pd.read_csv(features_file)
-                if 'lat' in df.columns and 'lon' in df.columns:
-                    features_gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['lon'], df['lat']), crs='EPSG:4326')
+                # Check for various lat/lon column naming conventions
+                lat_cols = [c for c in df.columns if c.lower() in ['lat', 'latitude']]
+                lon_cols = [c for c in df.columns if c.lower() in ['lon', 'longitude', 'long']]
+                if lat_cols and lon_cols:
+                    features_gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[lon_cols[0]], df[lat_cols[0]]), crs='EPSG:4326')
                 else:
                     features_gdf = df
             else:
@@ -313,10 +318,19 @@ def run_advanced_training_pipeline(features_file, deposits_file, mineral=None, n
                 deposits_gdf = gpd.read_file(deposits_file)
             elif deposits_file.endswith('.csv'):
                 df = pd.read_csv(deposits_file)
-                if 'lat' in df.columns and 'lon' in df.columns:
-                    deposits_gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['lon'], df['lat']), crs='EPSG:4326')
+                # Check for various lat/lon column naming conventions
+                lat_cols = [c for c in df.columns if c.lower() in ['lat', 'latitude']]
+                lon_cols = [c for c in df.columns if c.lower() in ['lon', 'longitude', 'long']]
+                if lat_cols and lon_cols:
+                    deposits_gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[lon_cols[0]], df[lat_cols[0]]), crs='EPSG:4326')
                 else:
                     deposits_gdf = df
+                # Check for mineral-specific label columns and rename to 'label'
+                mineral_labels = ['gold_present', 'copper_present', 'uranium_present']
+                for label_col in mineral_labels:
+                    if label_col in deposits_gdf.columns:
+                        deposits_gdf = deposits_gdf.rename(columns={label_col: 'label'})
+                        break
             else:
                 raise ValueError(f"Unsupported file format: {deposits_file}")
         else:
@@ -331,26 +345,48 @@ def run_advanced_training_pipeline(features_file, deposits_file, mineral=None, n
                     train_data = train_data.drop(columns=['geometry'])
                 X = train_data.drop(columns=['label'])
                 y = train_data['label']
-                if 'lon' in deposits_gdf.columns and 'lat' in deposits_gdf.columns:
-                    coords = np.array(list(zip(deposits_gdf['lon'], deposits_gdf['lat'])))
+                # Check for lat/lon columns with various naming conventions
+                lat_col = None
+                lon_col = None
+                for col in deposits_gdf.columns:
+                    if col.lower() in ['lat', 'latitude']:
+                        lat_col = col
+                    if col.lower() in ['lon', 'longitude', 'long']:
+                        lon_col = col
+                if lon_col and lat_col:
+                    coords = np.array(list(zip(deposits_gdf[lon_col], deposits_gdf[lat_col])))
                 else:
                     coords = np.zeros((len(train_data), 2))
             else:
                 positives = deposits_gdf.copy()
                 positives['label'] = 1
-                negatives = stratified_spatial_negative_sampling(positives, features_gdf, n_negatives_per_positive)
+                negatives = stratified_spatial_negative_sampling(positives, features_gdf, n_negatives_per_positive, min_distance=min_distance)
                 train_data = pd.concat([positives, negatives], ignore_index=True)
-                X = train_data.drop(columns=['label', 'geometry'])
+                # Only drop geometry if it exists
+                cols_to_drop = ['label']
+                if 'geometry' in train_data.columns:
+                    cols_to_drop.append('geometry')
+                X = train_data.drop(columns=cols_to_drop)
                 y = train_data['label']
-                coords = np.array([[geom.centroid.x, geom.centroid.y] if hasattr(geom, 'centroid') else [geom.x, geom.y] for geom in train_data.geometry])
+                if 'geometry' in train_data.columns and hasattr(train_data, 'geometry'):
+                    coords = np.array([[geom.centroid.x, geom.centroid.y] if hasattr(geom, 'centroid') else [geom.x, geom.y] for geom in train_data.geometry])
+                else:
+                    coords = np.zeros((len(train_data), 2))
         else:
             positives = deposits_gdf.copy()
             positives['label'] = 1
-            negatives = stratified_spatial_negative_sampling(positives, features_gdf, n_negatives_per_positive)
+            negatives = stratified_spatial_negative_sampling(positives, features_gdf, n_negatives_per_positive, min_distance=min_distance)
             train_data = pd.concat([positives, negatives], ignore_index=True)
-            X = train_data.drop(columns=['label', 'geometry'])
+            # Only drop geometry if it exists
+            cols_to_drop = ['label']
+            if 'geometry' in train_data.columns:
+                cols_to_drop.append('geometry')
+            X = train_data.drop(columns=cols_to_drop)
             y = train_data['label']
-            coords = np.array([[geom.x, geom.y] for geom in train_data.geometry])
+            if 'geometry' in train_data.columns and hasattr(train_data, 'geometry'):
+                coords = np.array([[geom.x, geom.y] for geom in train_data.geometry])
+            else:
+                coords = np.zeros((len(train_data), 2))
         
         logging.info(f"Training data: {len(train_data)} samples, {sum(y)} positives, {len(y) - sum(y)} negatives.")
         

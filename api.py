@@ -567,17 +567,35 @@ async def get_training_status():
 
 def batch_train(mineral: str):
     global training_active, training_iterations
-    while training_active:
+    # Run continuous trainer with max-runs=5
+    try:
+        result = subprocess.run(
+            ['python3', 'continuous_trainer.py', '--max-runs', '5', '--minerals', mineral],
+            capture_output=True,
+            text=True,
+            cwd='.'
+        )
         training_iterations += 1
-        # Run training
-        try:
-            result = subprocess.run(['python3', 'train_model.py', '100', mineral], capture_output=True, text=True, cwd='.')
-            if result.returncode != 0:
-                break
-        except:
-            break
-        import time
-        time.sleep(3)  # Pause between iterations
+    except Exception as e:
+        print(f"Training error: {e}")
+    finally:
+        training_active = False
+        training_iterations = 0
+
+@app.post("/start_continuous_training")
+async def start_continuous_training(mineral: str = Form(...)):
+    global training_active, training_iterations
+    if training_active:
+        return {"message": "Training already in progress"}
+    training_active = True
+    training_iterations = 0
+    # Start training in background
+    threading.Thread(target=batch_train, args=(mineral,)).start()
+    return {"message": f"Continuous training started for {mineral} with 5 runs"}
+
+@app.get("/continuous_training_status")
+async def get_continuous_training_status():
+    return {"active": training_active, "iterations": training_iterations}
 
 if __name__ == "__main__":
     import uvicorn
