@@ -76,9 +76,8 @@ def track_training_end(run_id, model, X, y, feature_names):
 
     logging.info(f"Training completed for run_id {run_id}: AUC={auc}, Accuracy={accuracy}, F1={f1}")
 
-    # Check for alerts
-    check_performance_degradation(run_id)
-    check_storage_capacity(disk)
+    # Alert checks disabled - no UI alerts
+    pass
 
     return accuracy, auc, f1
 
@@ -106,8 +105,8 @@ def check_storage_capacity(disk_usage):
 
 def log_training_failure(model_version, error_message):
     """Log a training failure."""
-    insert_alert('training_failure', f"Training failed for {model_version}: {error_message}", 'error')
-    logging.error(f"Training failure: {error_message}")
+    # Alert display removed - only log to file
+    logging.error(f"Training failure for {model_version}: {error_message}")
 
 def generate_performance_report():
     """Generate a report on model performance over time."""

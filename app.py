@@ -20,7 +20,7 @@ from src.data_architecture import get_files, get_models, get_models_by_mineral, 
 from src.data_ingestion import ingest_files
 from src.feature_engineering import FeatureEngineer
 from src.training_pipeline import run_training_pipeline
-from src.monitoring import get_active_alerts, generate_performance_report, plot_performance_trends, plot_feature_importance_evolution
+from src.monitoring import generate_performance_report, plot_performance_trends, plot_feature_importance_evolution
 from src.prediction import run_prediction_pipeline, convert_spatial_to_csv
 
 # Set page config
@@ -488,18 +488,6 @@ elif page == "Training":
 # Statistics Dashboard
 elif page == "Statistics Dashboard":
     st.title(f"Statistics Dashboard - {selected_mineral}")
-
-    # Alerts
-    alerts = get_active_alerts()
-    if alerts:
-        st.subheader("Active Alerts")
-        for alert in alerts:
-            severity_color = {'warning': 'orange', 'error': 'red', 'critical': 'darkred', 'info': 'blue'}
-            st.markdown(f"<span style='color:{severity_color.get(alert[3], 'black')}; font-weight:bold;'>{alert[3].upper()}: {alert[2]}</span>", unsafe_allow_html=True)
-            if st.button(f"Resolve Alert {alert[0]}", key=f"resolve_{alert[0]}"):
-                from src.monitoring import resolve_alert
-                resolve_alert(alert[0])
-                st.rerun()
 
     if selected_mineral == "All Minerals":
         models = get_models()

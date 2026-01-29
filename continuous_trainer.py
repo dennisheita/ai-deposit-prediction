@@ -228,44 +228,44 @@ class ContinuousTrainer:
         return False
     
     def _generate_hyperparams(self, mineral: str) -> Dict:
-        """Generate random hyperparameters for a training run"""
-        import random
-        
-        # Exploration vs exploitation
-        if random.random() < self.exploration_ratio or not self.run_history:
-            # Random exploration
-            if self.mode == 'advanced':
-                return {
-                    'n_negatives_per_positive': random.choice([1, 2, 3, 5]),
-                    'k': random.choice([5, 10, 15]),
-                    'n_trials': random.randint(20, 100),
-                    'min_distance': random.choice([0, 500, 1000, 2000])
-                }
-            else:
-                return {
-                    'n_negatives_per_positive': random.choice([1, 2, 3]),
-                    'k': random.choice([5, 10]),
-                    'param_grid': {
-                        'n_estimators': random.choice([[100, 500], [100, 500, 1000]]),
-                        'max_depth': random.choice([[10, 20], [10, 20, 30]]),
-                        'min_samples_split': [2, 5],
-                        'min_samples_leaf': [1, 2]
+            """Generate random hyperparameters for a training run"""
+            import random
+            
+            # Exploration vs exploitation
+            if random.random() < self.exploration_ratio or not self.run_history:
+                # Random exploration - OPTIMIZED FOR SPEED
+                if self.mode == 'advanced':
+                    return {
+                        'n_negatives_per_positive': random.choice([1, 2]),
+                        'k': random.choice([3, 5]),  # Reduced from [5, 10, 15]
+                        'n_trials': random.randint(5, 15),  # Reduced from [20, 100]
+                        'min_distance': random.choice([0, 500, 1000])
                     }
-                }
-        else:
-            # Guided search based on best performing configs
-            best_configs = [
-                run['config'] for run in self.run_history
-                if run.get('success') and run.get('score', 0) > 0.8
-            ]
-            if best_configs:
-                # Mutate a good config
-                base = random.choice(best_configs)
-                mutated = base.copy()
-                mutated['n_trials'] = max(10, mutated.get('n_trials', 50) + random.randint(-10, 20))
-                return mutated
+                else:
+                    return {
+                        'n_negatives_per_positive': random.choice([1, 2]),
+                        'k': random.choice([3, 5]),  # Reduced from [5, 10]
+                        'param_grid': {
+                            'n_estimators': random.choice([[50, 200], [100, 300]]),
+                            'max_depth': random.choice([[5, 10], [10, 20]]),
+                            'min_samples_split': [2, 5],
+                            'min_samples_leaf': [1, 2]
+                        }
+                    }
             else:
-                return self._generate_hyperparams(mineral)  # Fallback to random
+                # Guided search based on best performing configs
+                best_configs = [
+                    run['config'] for run in self.run_history
+                    if run.get('success') and run.get('score', 0) > 0.8
+                ]
+                if best_configs:
+                    # Mutate a good config
+                    base = random.choice(best_configs)
+                    mutated = base.copy()
+                    mutated['n_trials'] = max(5, mutated.get('n_trials', 10) + random.randint(-3, 5))  # Reduced from 50
+                    return mutated
+                else:
+                    return self._generate_hyperparams(mineral)  # Fallback to random
     
     def _get_data_files(self, mineral: str) -> Tuple[str, str]:
         """Get feature and deposit files for a mineral"""

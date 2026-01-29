@@ -5,7 +5,7 @@ import zipfile
 from src.data_ingestion import ingest_files
 from src.prediction import run_prediction_pipeline
 from src.data_architecture import get_models, get_models_by_mineral, get_files
-from src.monitoring import get_active_alerts, generate_performance_report, plot_performance_trends, plot_feature_importance_evolution
+from src.monitoring import generate_performance_report, plot_performance_trends, plot_feature_importance_evolution
 import matplotlib.pyplot as plt
 import io
 import base64
@@ -172,7 +172,6 @@ def stats():
     else:
         models = get_models_by_mineral(mineral)
 
-    alerts = get_active_alerts()
     report = generate_performance_report()
 
     # Performance trends plot
@@ -195,7 +194,7 @@ def stats():
         fi_img = base64.b64encode(buf.read()).decode('utf-8')
         plt.close(fig_fi)
 
-    return render_template('stats.html', models=models, alerts=alerts, report=report, trends_img=trends_img, fi_img=fi_img, selected_mineral=mineral)
+    return render_template('stats.html', models=models, report=report, trends_img=trends_img, fi_img=fi_img, selected_mineral=mineral)
 
 @app.route('/compare', methods=['GET', 'POST'])
 def compare():

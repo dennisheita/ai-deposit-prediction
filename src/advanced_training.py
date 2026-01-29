@@ -12,7 +12,7 @@ from sklearn.cluster import KMeans
 from shapely.geometry import Point
 from .data_architecture import load_geoparquet, insert_model
 import multiprocessing
-from .monitoring import track_training_start, track_training_end, log_training_failure, calculate_data_quality, update_training_run
+from .monitoring import track_training_start, track_training_end, calculate_data_quality, update_training_run
 import xgboost as xgb
 import lightgbm as lgb
 import optuna
@@ -127,17 +127,22 @@ def spatial_kfold_cv(X, y, coords, k=10):
 
 def optimize_xgboost(trial, X, y, cv):
     """Optimize XGBoost hyperparameters using Optuna"""
+    # Calculate scale_pos_weight for imbalanced data
+    n_pos = sum(y)
+    n_neg = len(y) - n_pos
+    scale_pos_weight = n_neg / max(n_pos, 1)  # Avoid division by zero
+    
     params = {
-        'n_estimators': trial.suggest_int('n_estimators', 100, 3000),
+        'n_estimators': trial.suggest_int('n_estimators', 50, 500),
         'max_depth': trial.suggest_int('max_depth', 3, 20),
         'learning_rate': trial.suggest_loguniform('learning_rate', 0.001, 0.3),
         'subsample': trial.suggest_uniform('subsample', 0.5, 1.0),
         'colsample_bytree': trial.suggest_uniform('colsample_bytree', 0.5, 1.0),
-        'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
+        'min_child_weight': trial.suggest_int('min_child_weight', 1, 5),  # Reduced max
         'gamma': trial.suggest_loguniform('gamma', 1e-8, 1.0),
         'reg_alpha': trial.suggest_loguniform('reg_alpha', 1e-8, 1.0),
         'reg_lambda': trial.suggest_loguniform('reg_lambda', 1e-8, 1.0),
-        'scale_pos_weight': trial.suggest_int('scale_pos_weight', 1, 20),
+        'scale_pos_weight': scale_pos_weight,  # Auto-calculate for imbalance
         'objective': 'binary:logistic',
         'eval_metric': 'auc',
         'tree_method': 'hist',
@@ -157,20 +162,26 @@ def optimize_xgboost(trial, X, y, cv):
 
 def optimize_lightgbm(trial, X, y, cv):
     """Optimize LightGBM hyperparameters using Optuna"""
+    # Calculate scale_pos_weight for imbalanced data
+    n_pos = sum(y)
+    n_neg = len(y) - n_pos
+    scale_pos_weight = n_neg / max(n_pos, 1)  # Avoid division by zero
+    
     params = {
-        'n_estimators': trial.suggest_int('n_estimators', 100, 3000),
+        'n_estimators': trial.suggest_int('n_estimators', 50, 500),
         'max_depth': trial.suggest_int('max_depth', 3, 20),
         'learning_rate': trial.suggest_loguniform('learning_rate', 0.001, 0.3),
         'subsample': trial.suggest_uniform('subsample', 0.5, 1.0),
         'colsample_bytree': trial.suggest_uniform('colsample_bytree', 0.5, 1.0),
-        'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
+        'min_child_samples': trial.suggest_int('min_child_samples', 1, 20),  # Reduced from 5-100
         'reg_alpha': trial.suggest_loguniform('reg_alpha', 1e-8, 1.0),
         'reg_lambda': trial.suggest_loguniform('reg_lambda', 1e-8, 1.0),
-        'scale_pos_weight': trial.suggest_int('scale_pos_weight', 1, 20),
+        'scale_pos_weight': scale_pos_weight,  # Auto-calculate for imbalance
         'objective': 'binary',
         'metric': 'auc',
         'boosting_type': 'gbdt',
-        'random_state': 42
+        'random_state': 42,
+        'verbose': -1  # Suppress warnings
     }
     
     scores = []
@@ -187,7 +198,7 @@ def optimize_lightgbm(trial, X, y, cv):
 def optimize_random_forest(trial, X, y, cv):
     """Optimize Random Forest hyperparameters using Optuna"""
     params = {
-        'n_estimators': trial.suggest_int('n_estimators', 100, 3000),
+        'n_estimators': trial.suggest_int('n_estimators', 50, 500),
         'max_depth': trial.suggest_int('max_depth', 10, 100),
         'min_samples_split': trial.suggest_int('min_samples_split', 2, 20),
         'min_samples_leaf': trial.suggest_int('min_samples_leaf', 1, 10),
@@ -208,7 +219,7 @@ def optimize_random_forest(trial, X, y, cv):
     
     return np.mean(scores)
 
-def train_xgboost(X, y, cv, n_trials=50):
+def train_xgboost(X, y, cv, n_trials=10):
     """Train optimized XGBoost model"""
     study = optuna.create_study(direction='maximize', study_name='XGBoost Optimization')
     study.optimize(lambda trial: optimize_xgboost(trial, X, y, cv), n_trials=n_trials, n_jobs=-1)
@@ -221,7 +232,7 @@ def train_xgboost(X, y, cv, n_trials=50):
     
     return model, best_params, best_score
 
-def train_lightgbm(X, y, cv, n_trials=50):
+def train_lightgbm(X, y, cv, n_trials=10):
     """Train optimized LightGBM model"""
     study = optuna.create_study(direction='maximize', study_name='LightGBM Optimization')
     study.optimize(lambda trial: optimize_lightgbm(trial, X, y, cv), n_trials=n_trials, n_jobs=-1)
@@ -234,7 +245,7 @@ def train_lightgbm(X, y, cv, n_trials=50):
     
     return model, best_params, best_score
 
-def train_random_forest(X, y, cv, n_trials=50):
+def train_random_forest(X, y, cv, n_trials=10):
     """Train optimized Random Forest model"""
     study = optuna.create_study(direction='maximize', study_name='Random Forest Optimization')
     study.optimize(lambda trial: optimize_random_forest(trial, X, y, cv), n_trials=n_trials, n_jobs=-1)
@@ -421,25 +432,49 @@ def run_advanced_training_pipeline(features_file, deposits_file, mineral=None, n
         
         logging.info(f"After cleaning: X shape = {X.shape}, numeric columns = {len(X.columns)}")
         
+        # Calculate imbalance ratio
+        n_pos = sum(y)
+        n_neg = len(y) - n_pos
+        imbalance_ratio = n_neg / max(n_pos, 1)
+        logging.info(f"Class imbalance ratio: {imbalance_ratio:.1f}:1 (pos={n_pos}, neg={n_neg})")
+        
+        # Apply SMOTE for extreme imbalance (>10:1 ratio)
+        if imbalance_ratio > 10:
+            logging.info(f"Applying SMOTE to balance classes (ratio={imbalance_ratio:.1f}:1)...")
+            try:
+                smote = SMOTE(random_state=42, k_neighbors=min(5, n_pos-1))
+                X_resampled, y_resampled = smote.fit_resample(X, y)
+                logging.info(f"After SMOTE: {len(X_resampled)} samples, {sum(y_resampled)} positives")
+                X, y = X_resampled, y_resampled
+                # Update coords to match resampled data (use zeros for synthetic samples)
+                coords = np.vstack([coords, np.zeros((len(X_resampled) - len(coords), 2))])
+            except Exception as e:
+                logging.warning(f"SMOTE failed: {e}. Continuing with imbalanced data.")
+        
         cv = list(spatial_kfold_cv(X, y, coords, k))
         
         logging.info("Training XGBoost model...")
         xgb_model, xgb_params, xgb_score = train_xgboost(X, y, cv, n_trials)
         
-        logging.info("Training LightGBM model...")
-        lgb_model, lgb_params, lgb_score = train_lightgbm(X, y, cv, n_trials)
+        # Skip LightGBM - causes "No further splits with positive gain" errors on imbalanced data
+        # logging.info("Training LightGBM model...")
+        # lgb_model, lgb_params, lgb_score = train_lightgbm(X, y, cv, n_trials)
         
         logging.info("Training Random Forest model...")
         rf_model, rf_params, rf_score = train_random_forest(X, y, cv, n_trials)
         
         logging.info("Creating ensemble model...")
-        ensemble = create_ensemble([xgb_model, lgb_model, rf_model])
+        # Use only XGBoost and Random Forest for ensemble
+        ensemble = create_ensemble([xgb_model, rf_model])
         ensemble.fit(X, y)
         
-        ensemble_score = np.mean([xgb_score, lgb_score, rf_score])
+        ensemble_score = np.mean([xgb_score, rf_score])
         
         xgb_path = save_model(xgb_model, version, 'xgboost')
-        lgb_path = save_model(lgb_model, version, 'lightgbm')
+        # lgb_path = save_model(lgb_model, version, 'lightgbm')
+        lgb_path = None
+        lgb_params = {}
+        lgb_score = 0.0
         rf_path = save_model(rf_model, version, 'randomforest')
         ensemble_path = save_model(ensemble, version, 'ensemble')
         
@@ -483,7 +518,7 @@ def run_advanced_training_pipeline(features_file, deposits_file, mineral=None, n
         return f"Training completed. Best model: {best_model_type} (AUC: {best_score:.4f}) saved at {best_path}"
         
     except Exception as e:
-        log_training_failure(version, str(e))
+        # Training failure logged to file only - no UI alerts
         update_training_run(run_id, status='failed')
-        logging.error(f"Training failed: {str(e)}")
+        logging.error(f"Training failed for {version}: {str(e)}")
         raise

@@ -4,7 +4,7 @@ import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import TrainingRunTable, { ModelData, TrainingStatus } from '@/components/TrainingRunTable'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { AlertCircle, TrendingUp, BarChart3, FileText, Zap } from 'lucide-react'
+import { TrendingUp, BarChart3, FileText, Zap } from 'lucide-react'
 
 interface RawModel {
   0: number
@@ -14,18 +14,10 @@ interface RawModel {
   4: string // mineral
 }
 
-interface Alert {
-  0: number
-  1: string
-  2: string
-  3: string
-}
-
 function StatsContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const [models, setModels] = useState<RawModel[]>([])
-  const [alerts, setAlerts] = useState<Alert[]>([])
   const [report, setReport] = useState('')
   const [trendsImg, setTrendsImg] = useState('')
   const [fiImg, setFiImg] = useState('')
@@ -46,7 +38,6 @@ function StatsContent() {
       const response = await fetch(`/api/stats?mineral=${encodeURIComponent(mineral)}`)
       const data = await response.json()
       setModels(data.models)
-      setAlerts(data.alerts)
       setReport(data.report)
       setTrendsImg(data.trends_img)
       setFiImg(data.fi_img)

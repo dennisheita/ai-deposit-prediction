@@ -20,15 +20,6 @@
     <div class="container">
         <h1>Statistics Dashboard - {{ selected_mineral }}</h1>
 
-        {% if alerts %}
-            <h2>Active Alerts</h2>
-            <ul class="alert">
-                {% for alert in alerts %}
-                    <li>{{ alert[3] }}: {{ alert[2] }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-
         <h2>Training Runs</h2>
         <p>Total: {{ models|length }}</p>
         {% if models %}

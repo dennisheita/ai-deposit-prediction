@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from src.data_ingestion import ingest_files
 from src.prediction import run_prediction_pipeline, run_prediction_pipeline_from_geojson
 from src.data_architecture import get_models, get_models_by_mineral, get_files
-from src.monitoring import get_active_alerts, generate_performance_report, plot_performance_trends, plot_feature_importance_evolution
+from src.monitoring import generate_performance_report, plot_performance_trends, plot_feature_importance_evolution
 from src.training_pipeline import run_training_pipeline
 from src.advanced_training import run_advanced_training_pipeline
 
@@ -359,7 +359,6 @@ async def get_stats(mineral: str = "All Minerals"):
     else:
         models = get_models_by_mineral(mineral)
 
-    alerts = get_active_alerts()
     report = generate_performance_report()
 
     # Performance trends plot
@@ -387,7 +386,6 @@ async def get_stats(mineral: str = "All Minerals"):
 
     return {
         "models": models,
-        "alerts": alerts,
         "report": report,
         "trends_img": trends_img,
         "fi_img": fi_img,

@@ -12,7 +12,7 @@ from sklearn.cluster import KMeans
 from shapely.geometry import Point
 from .data_architecture import load_geoparquet, insert_model
 import multiprocessing
-from .monitoring import track_training_start, track_training_end, log_training_failure, calculate_data_quality, update_training_run
+from .monitoring import track_training_start, track_training_end, calculate_data_quality, update_training_run
 
 # Directories
 MODELS_DIR = 'models/'
@@ -313,7 +313,7 @@ def run_training_pipeline(features_file, deposits_file, mineral=None, n_negative
         return f"Training completed. Best model saved at {model_path} with AUC {best_score}"
 
     except Exception as e:
-        log_training_failure(version, str(e))
+        # Training failure logged to file only - no UI alerts
         update_training_run(run_id, status='failed')
-        logging.error(f"Training failed: {str(e)}")
+        logging.error(f"Training failed for {version}: {str(e)}")
         raise

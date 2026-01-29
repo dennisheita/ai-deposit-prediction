@@ -1,10 +1,149 @@
 {
-  "run_count": 0,
+  "run_count": 13,
   "best_scores": {
-    "Gold": 0.0,
-    "Copper": 0.0,
-    "Uranium": 0.0
+    "Copper": 1.0
   },
-  "run_history": [],
-  "timestamp": "2026-01-28T11:47:01.485842"
+  "run_history": [
+    {
+      "run": 4,
+      "mineral": "Copper",
+      "success": true,
+      "score": 1.0,
+      "duration": 17.42783284187317,
+      "error": null,
+      "config": {
+        "n_negatives_per_positive": 1,
+        "k": 3,
+        "n_trials": 7,
+        "min_distance": 1000
+      }
+    },
+    {
+      "run": 5,
+      "mineral": "Copper",
+      "success": true,
+      "score": 1.0,
+      "duration": 31.85196304321289,
+      "error": null,
+      "config": {
+        "n_negatives_per_positive": 2,
+        "k": 3,
+        "n_trials": 15,
+        "min_distance": 0
+      }
+    },
+    {
+      "run": 6,
+      "mineral": "Copper",
+      "success": true,
+      "score": 1.0,
+      "duration": 24.831193923950195,
+      "error": null,
+      "config": {
+        "n_negatives_per_positive": 2,
+        "k": 3,
+        "n_trials": 12,
+        "min_distance": 1000
+      }
+    },
+    {
+      "run": 7,
+      "mineral": "Copper",
+      "success": true,
+      "score": 1.0,
+      "duration": 10.214195966720581,
+      "error": null,
+      "config": {
+        "n_negatives_per_positive": 1,
+        "k": 3,
+        "n_trials": 5,
+        "min_distance": 1000
+      }
+    },
+    {
+      "run": 8,
+      "mineral": "Copper",
+      "success": true,
+      "score": 1.0,
+      "duration": 36.20654797554016,
+      "error": null,
+      "config": {
+        "n_negatives_per_positive": 2,
+        "k": 3,
+        "n_trials": 16,
+        "min_distance": 1000
+      }
+    },
+    {
+      "run": 9,
+      "mineral": "Copper",
+      "success": true,
+      "score": 1.0,
+      "duration": 38.10170602798462,
+      "error": null,
+      "config": {
+        "n_negatives_per_positive": 2,
+        "k": 5,
+        "n_trials": 12,
+        "min_distance": 500
+      }
+    },
+    {
+      "run": 10,
+      "mineral": "Copper",
+      "success": true,
+      "score": 1.0,
+      "duration": 30.787669897079468,
+      "error": null,
+      "config": {
+        "n_negatives_per_positive": 2,
+        "k": 3,
+        "n_trials": 13,
+        "min_distance": 0
+      }
+    },
+    {
+      "run": 11,
+      "mineral": "Copper",
+      "success": true,
+      "score": 1.0,
+      "duration": 30.633862733840942,
+      "error": null,
+      "config": {
+        "n_negatives_per_positive": 2,
+        "k": 3,
+        "n_trials": 13,
+        "min_distance": 0
+      }
+    },
+    {
+      "run": 12,
+      "mineral": "Copper",
+      "success": true,
+      "score": 1.0,
+      "duration": 14.918795108795166,
+      "error": null,
+      "config": {
+        "n_negatives_per_positive": 2,
+        "k": 3,
+        "n_trials": 6,
+        "min_distance": 500
+      }
+    },
+    {
+      "run": 13,
+      "mineral": "Copper",
+      "success": true,
+      "score": 1.0,
+      "duration": 25.07278800010681,
+      "error": null,
+      "config": {
+        "n_negatives_per_positive": 2,
+        "k": 3,
+        "n_trials": 12,
+        "min_distance": 1000
+      }
+    }
+  ],
+  "timestamp": "2026-01-29T23:34:26.618283"
 }
