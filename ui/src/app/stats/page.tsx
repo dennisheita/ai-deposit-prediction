@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import TrainingRunTable, { ModelData, TrainingStatus } from '@/components/TrainingRunTable'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -21,7 +21,7 @@ interface Alert {
   3: string
 }
 
-export default function Stats() {
+function StatsContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const [models, setModels] = useState<RawModel[]>([])
@@ -168,5 +168,25 @@ export default function Stats() {
 
       <div className="h-4" aria-hidden="true" /> {/* Spacer */}
     </div>
+  )
+}
+
+export default function Stats() {
+  return (
+    <Suspense fallback={
+      <div className="flex flex-col gap-6 p-6 md:p-8 lg:p-10">
+        <header className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-8 h-8 text-blue-600 dark:text-blue-400" />
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">
+              Statistics & Monitoring
+            </h1>
+          </div>
+          <p className="text-muted-foreground text-lg">Loading...</p>
+        </header>
+      </div>
+    }>
+      <StatsContent />
+    </Suspense>
   )
 }
