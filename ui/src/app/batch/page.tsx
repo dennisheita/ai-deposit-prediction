@@ -1,13 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Play, Square, Loader2, Zap, Activity } from 'lucide-react'
 
-export default function BatchTraining() {
+function BatchTrainingContent() {
     const searchParams = useSearchParams()
     const [mineral, setMineral] = useState(searchParams.get('mineral') || 'All Minerals')
     const [isTraining, setIsTraining] = useState(false)
@@ -207,5 +207,25 @@ export default function BatchTraining() {
                 </CardContent>
             </Card>
         </div>
+    )
+}
+
+export default function BatchTraining() {
+    return (
+        <Suspense fallback={
+            <div className="flex flex-col gap-6 p-6 md:p-8 lg:p-10">
+                <header className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                        <Zap className="w-8 h-8 text-yellow-500" />
+                        <h1 className="text-3xl font-bold tracking-tight text-foreground">
+                            Perpetual Training
+                        </h1>
+                    </div>
+                    <p className="text-muted-foreground text-lg">Loading...</p>
+                </header>
+            </div>
+        }>
+            <BatchTrainingContent />
+        </Suspense>
     )
 }
