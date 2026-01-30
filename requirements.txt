@@ -14,10 +14,11 @@ matplotlib
 psutil
 flask
 fastapi
-uvicorn
+uvicorn[standard]
 python-multipart
 xgboost
 lightgbm
 optuna
 imbalanced-learn
 scipy
+websockets

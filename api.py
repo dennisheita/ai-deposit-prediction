@@ -1,11 +1,13 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import tempfile
 import zipfile
 import json
-from typing import List, Optional
+import asyncio
+from typing import List, Optional, Dict, Any
+from dataclasses import dataclass, asdict
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
@@ -26,6 +28,134 @@ from src.monitoring import generate_performance_report, plot_performance_trends,
 from src.training_pipeline import run_training_pipeline
 from src.advanced_training import run_advanced_training_pipeline
 
+
+# WebSocket Training State Manager
+@dataclass
+class TrainingState:
+    active: bool = False
+    mineral: str = ""
+    current_run: int = 0
+    total_runs: int = 0
+    current_score: Optional[float] = None
+    best_score: Optional[float] = None
+    status_message: str = "Idle"
+    last_update: Optional[str] = None
+    run_history: List[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        if self.run_history is None:
+            self.run_history = []
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "active": self.active,
+            "mineral": self.mineral,
+            "current_run": self.current_run,
+            "total_runs": self.total_runs,
+            "current_score": self.current_score,
+            "best_score": self.best_score,
+            "status_message": self.status_message,
+            "last_update": self.last_update,
+            "run_history": self.run_history[-10:]  # Last 10 runs
+        }
+
+
+class TrainingStateManager:
+    """Manages training state and broadcasts updates to all connected WebSocket clients"""
+
+    def __init__(self):
+        self.state = TrainingState()
+        self.connections: List[WebSocket] = []
+        self._lock = asyncio.Lock()
+
+    async def connect(self, websocket: WebSocket):
+        """Accept new WebSocket connection and send current state"""
+        await websocket.accept()
+        async with self._lock:
+            self.connections.append(websocket)
+        # Send current state immediately upon connection
+        await self._send_to_client(websocket, self.state.to_dict())
+        print(f"WebSocket client connected. Total connections: {len(self.connections)}")
+
+    async def disconnect(self, websocket: WebSocket):
+        """Remove disconnected WebSocket client"""
+        async with self._lock:
+            if websocket in self.connections:
+                self.connections.remove(websocket)
+        print(f"WebSocket client disconnected. Total connections: {len(self.connections)}")
+
+    async def broadcast(self, message: Dict[str, Any]):
+        """Broadcast message to all connected clients"""
+        disconnected = []
+        for conn in self.connections:
+            try:
+                await conn.send_json(message)
+            except Exception as e:
+                print(f"Failed to send to client: {e}")
+                disconnected.append(conn)
+
+        # Clean up disconnected clients
+        async with self._lock:
+            for conn in disconnected:
+                if conn in self.connections:
+                    self.connections.remove(conn)
+
+    async def _send_to_client(self, websocket: WebSocket, message: Dict[str, Any]):
+        """Send message to a specific client"""
+        try:
+            await websocket.send_json(message)
+        except Exception as e:
+            print(f"Failed to send to specific client: {e}")
+
+    def update_state(self, **kwargs):
+        """Update training state and broadcast to all clients"""
+        for key, value in kwargs.items():
+            if hasattr(self.state, key):
+                setattr(self.state, key, value)
+        self.state.last_update = datetime.now().isoformat()
+
+        # Broadcast asynchronously
+        asyncio.create_task(self.broadcast(self.state.to_dict()))
+
+    def start_training(self, mineral: str, total_runs: int):
+        """Mark training as started"""
+        self.update_state(
+            active=True,
+            mineral=mineral,
+            total_runs=total_runs,
+            current_run=0,
+            current_score=None,
+            status_message=f"Starting training for {mineral}"
+        )
+
+    def update_progress(self, current_run: int, mineral: str, status_message: str):
+        """Update training progress"""
+        self.update_state(
+            current_run=current_run,
+            mineral=mineral,
+            status_message=status_message
+        )
+
+    def update_run_complete(self, run_data: Dict[str, Any]):
+        """Update when a run completes"""
+        self.state.run_history.append(run_data)
+        if run_data.get('success') and run_data.get('score'):
+            self.update_state(
+                current_score=run_data['score'],
+                best_score=max(self.state.best_score or 0, run_data['score'])
+            )
+
+    def stop_training(self):
+        """Mark training as stopped"""
+        self.update_state(
+            active=False,
+            status_message="Training stopped"
+        )
+
+
+# Global training state manager
+training_manager = TrainingStateManager()
+
 app = FastAPI()
 
 @app.get("/health")
@@ -38,6 +168,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Ensure directories exist
@@ -540,30 +671,121 @@ async def download_file(file_id: int):
         return FileResponse(file_info[5], media_type='application/octet-stream', filename=file_info[1])
     raise HTTPException(status_code=404, detail="File not found")
 
+# WebSocket endpoint for real-time training updates
+@app.websocket("/ws/training")
+async def training_websocket(websocket: WebSocket):
+    """WebSocket endpoint for real-time training status updates"""
+    await training_manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive and handle any incoming messages
+            data = await websocket.receive_text()
+            # Echo back or handle commands if needed
+            if data == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        await training_manager.disconnect(websocket)
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        await training_manager.disconnect(websocket)
+
+
 # For batch processing, training iterations
 training_active = False
 training_iterations = 0
 
+
+def batch_train_with_websocket(mineral: str):
+    """Run training with WebSocket status updates"""
+    global training_active, training_iterations
+
+    # Notify all clients that training is starting
+    training_manager.start_training(mineral, total_runs=5)
+
+    # Run continuous trainer with max-runs=5 and websocket updates
+    try:
+        # Use a subprocess that writes to a status file we can monitor
+        import json
+        import time
+
+        # Create a status file for inter-process communication
+        status_file = 'training_status_live.json'
+
+        # Start the subprocess - pass minerals as a single argument
+        process = subprocess.Popen(
+            ['python3', 'continuous_trainer.py', '--max-runs', '5', '--minerals', mineral],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd='.'
+        )
+
+        # Monitor the process and update status
+        run_count = 0
+        while process.poll() is None:
+            # Check for status updates from the file
+            if os.path.exists(status_file):
+                try:
+                    with open(status_file, 'r') as f:
+                        status = json.load(f)
+
+                    # Update training manager with current status
+                    training_manager.update_state(
+                        active=True,
+                        mineral=status.get('mineral', mineral),
+                        current_run=status.get('current_run', run_count),
+                        total_runs=status.get('total_runs', 5),
+                        current_score=status.get('current_score'),
+                        best_score=status.get('best_score'),
+                        status_message=status.get('message', 'Training in progress...')
+                    )
+                except Exception as e:
+                    pass
+
+            time.sleep(1)  # Poll every second
+
+        training_iterations += 1
+
+    except Exception as e:
+        print(f"Training error: {e}")
+        training_manager.update_state(
+            active=False,
+            status_message=f"Error: {str(e)}"
+        )
+    finally:
+        training_active = False
+        training_iterations = 0
+        training_manager.stop_training()
+
+
 @app.post("/start_batch_training")
 async def start_batch_training(mineral: str = Form(...)):
     global training_active, training_iterations
+    if training_manager.state.active:
+        return {"message": "Training already in progress"}
     training_active = True
     training_iterations = 0
-    # Start training in background
-    threading.Thread(target=batch_train, args=(mineral,)).start()
+    # Start training in background with WebSocket updates
+    threading.Thread(target=batch_train_with_websocket, args=(mineral,)).start()
     return {"message": "Batch training started"}
+
 
 @app.post("/stop_batch_training")
 async def stop_batch_training():
     global training_active
     training_active = False
+    training_manager.stop_training()
     return {"message": "Batch training stopped"}
+
 
 @app.get("/training_status")
 async def get_training_status():
-    return {"active": training_active, "iterations": training_iterations}
+    """Get current training status (REST API fallback)"""
+    return training_manager.state.to_dict()
+
 
 def batch_train(mineral: str):
+    """Legacy batch train function (kept for compatibility)"""
     global training_active, training_iterations
     # Run continuous trainer with max-runs=5
     try:
@@ -580,20 +802,24 @@ def batch_train(mineral: str):
         training_active = False
         training_iterations = 0
 
+
 @app.post("/start_continuous_training")
 async def start_continuous_training(mineral: str = Form(...)):
     global training_active, training_iterations
-    if training_active:
+    if training_manager.state.active:
         return {"message": "Training already in progress"}
     training_active = True
     training_iterations = 0
-    # Start training in background
-    threading.Thread(target=batch_train, args=(mineral,)).start()
+    # Start training in background with WebSocket updates
+    threading.Thread(target=batch_train_with_websocket, args=(mineral,)).start()
     return {"message": f"Continuous training started for {mineral} with 5 runs"}
+
 
 @app.get("/continuous_training_status")
 async def get_continuous_training_status():
-    return {"active": training_active, "iterations": training_iterations}
+    """Get current training status (REST API fallback)"""
+    return training_manager.state.to_dict()
+
 
 if __name__ == "__main__":
     import uvicorn

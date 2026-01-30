@@ -84,9 +84,31 @@ def load_model(model_version):
     model_info = next((m for m in models if m[1] == model_version), None)
     if not model_info:
         raise ValueError(f"Model version {model_version} not found")
-    model_path = json.loads(model_info[2])['model_path'] if model_info[2] else f"models/model_v{model_version}.joblib"
+    
+    # Parse model metadata
+    model_metadata = json.loads(model_info[2]) if model_info[2] else {}
+    
+    # Try to get model_path from metadata - handle different model formats
+    model_path = None
+    if isinstance(model_metadata, dict):
+        # Direct model_path
+        if 'model_path' in model_metadata:
+            model_path = model_metadata['model_path']
+        # Ensemble model with nested paths
+        elif 'ensemble' in model_metadata and 'path' in model_metadata['ensemble']:
+            model_path = model_metadata['ensemble']['path']
+        # Try xgboost or randomforest paths as fallback
+        elif 'xgboost' in model_metadata and model_metadata['xgboost'].get('path'):
+            model_path = model_metadata['xgboost']['path']
+        elif 'randomforest' in model_metadata and model_metadata['randomforest'].get('path'):
+            model_path = model_metadata['randomforest']['path']
+    
+    if not model_path:
+        model_path = f"models/model_v{model_version}.joblib"
+    
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file {model_path} not found")
+    
     loaded = joblib.load(model_path)
     
     feature_names = None

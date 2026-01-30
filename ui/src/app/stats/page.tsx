@@ -4,7 +4,10 @@ import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import TrainingRunTable, { ModelData, TrainingStatus } from '@/components/TrainingRunTable'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { TrendingUp, BarChart3, FileText, Zap } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
+import { TrendingUp, BarChart3, FileText, Zap, Activity, Wifi, WifiOff, Trophy } from 'lucide-react'
+import { useTrainingWebSocket } from '@/hooks/useTrainingWebSocket'
 
 interface RawModel {
   0: number
@@ -23,6 +26,9 @@ function StatsContent() {
   const [fiImg, setFiImg] = useState('')
   const [mineral, setMineral] = useState('All Minerals')
   const [allMinerals, setAllMinerals] = useState<string[]>([])
+
+  // WebSocket for live training status
+  const { trainingState, isConnected } = useTrainingWebSocket()
 
   useEffect(() => {
     const mineralParam = searchParams.get('mineral') || 'All Minerals'
@@ -46,6 +52,11 @@ function StatsContent() {
       console.error(error)
     }
   }
+
+  // Calculate progress percentage
+  const progressPercent = trainingState.total_runs > 0
+    ? Math.round((trainingState.current_run / trainingState.total_runs) * 100)
+    : 0
 
   const modelData: ModelData[] = models.map((m) => {
     let metricsStr = 'N/A'
@@ -84,12 +95,101 @@ function StatsContent() {
           <h1 className="text-3xl font-bold tracking-tight text-foreground">
             Statistics & Monitoring
           </h1>
+          {/* Live Training Indicator */}
+          {trainingState.active && (
+            <div className="flex items-center gap-2 ml-4 px-3 py-1 bg-green-100 dark:bg-green-900/30 rounded-full">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+              </span>
+              <span className="text-sm font-medium text-green-700 dark:text-green-400">Training Live</span>
+            </div>
+          )}
         </div>
-        <p className="text-muted-foreground text-lg">
-          Comprehensive overview of model performance and training history for <span className="text-foreground font-semibold underline decoration-blue-500/50">{mineral}</span>.
-        </p>
+        <div className="flex items-center gap-4">
+          <p className="text-muted-foreground text-lg">
+            Comprehensive overview of model performance and training history for <span className="text-foreground font-semibold underline decoration-blue-500/50">{mineral}</span>.
+          </p>
+          {/* WebSocket Connection Status */}
+          <div className="flex items-center gap-2 text-sm">
+            {isConnected ? (
+              <>
+                <Wifi className="w-4 h-4 text-green-500" />
+                <span className="text-green-600">Live</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-4 h-4 text-red-500" />
+                <span className="text-red-600">Offline</span>
+              </>
+            )}
+          </div>
+        </div>
       </header>
 
+      {/* Live Training Status Card - Shows when training is active */}
+      {trainingState.active && (
+        <Card className="border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-900/10">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-green-700 dark:text-green-400">
+              <Activity className="w-5 h-5" />
+              Live Training in Progress
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+              </span>
+            </CardTitle>
+            <CardDescription>
+              Real-time updates from the training pipeline
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="space-y-1">
+                <span className="text-sm text-muted-foreground">Current Mineral</span>
+                <p className="text-lg font-semibold">{trainingState.mineral || '-'}</p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-sm text-muted-foreground">Progress</span>
+                <p className="text-lg font-semibold">{trainingState.current_run} / {trainingState.total_runs}</p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-sm text-muted-foreground">Current Score</span>
+                <p className="text-lg font-semibold text-blue-600">
+                  {trainingState.current_score !== null && trainingState.current_score !== undefined
+                    ? trainingState.current_score.toFixed(4)
+                    : '-'}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-sm text-muted-foreground flex items-center gap-1">
+                  <Trophy className="w-4 h-4 text-yellow-500" />
+                  Best Score
+                </span>
+                <p className="text-lg font-semibold text-yellow-600">
+                  {trainingState.best_score !== null && trainingState.best_score !== undefined
+                    ? trainingState.best_score.toFixed(4)
+                    : '-'}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>Overall Progress</span>
+                <span className="font-mono">{progressPercent}%</span>
+              </div>
+              <Progress value={progressPercent} className="h-2" />
+            </div>
+
+            {trainingState.status_message && (
+              <div className="p-3 bg-white dark:bg-zinc-900 rounded-md text-sm border">
+                <span className="font-medium">Status:</span> {trainingState.status_message}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 gap-6">
         <TrainingRunTable

@@ -42,9 +42,19 @@ from src.data_architecture import get_models, get_training_runs, insert_model
 LOGS_DIR = 'logs/'
 MODELS_DIR = 'models/'
 STATE_FILE = 'continuous_trainer_state.json'
+LIVE_STATUS_FILE = 'training_status_live.json'  # For real-time WebSocket updates
 
 os.makedirs(LOGS_DIR, exist_ok=True)
 os.makedirs(MODELS_DIR, exist_ok=True)
+
+
+def write_live_status(status: dict):
+    """Write live status to file for WebSocket monitoring"""
+    try:
+        with open(LIVE_STATUS_FILE, 'w') as f:
+            json.dump(status, f)
+    except Exception as e:
+        logger.warning(f"Could not write live status: {e}")
 
 # Setup logging
 logging.basicConfig(
@@ -389,28 +399,52 @@ class ContinuousTrainer:
         logger.info("Starting continuous training loop...")
         logger.info(f"Target minerals: {self.minerals}")
         logger.info(f"Press Ctrl+C to stop gracefully")
-        
+
         print("🚀 Starting continuous training", flush=True)
         print(f"🎯 Target minerals: {', '.join(self.minerals)}", flush=True)
         print(f"⚙️  Mode: {self.mode}", flush=True)
         print("⏹️  Press Ctrl+C to stop gracefully\n", flush=True)
-        
+
+        # Write initial live status
+        write_live_status({
+            'active': True,
+            'mineral': self.minerals[0] if self.minerals else '',
+            'current_run': 0,
+            'total_runs': self.max_runs or 999999,
+            'current_score': None,
+            'best_score': max(self.best_scores.values()) if self.best_scores else 0,
+            'message': 'Starting continuous training...',
+            'timestamp': datetime.datetime.now().isoformat()
+        })
+
         try:
             while not self._should_stop():
-                # Cycle through minerals
+                # Cycle through minerals - only train if in allowed list
                 for mineral in self.minerals:
                     if self._should_stop():
                         break
-                    
+
                     print(f"\n🪨 Training mineral: {mineral} (Run #{self.run_count + 1})", flush=True)
-                    
+
+                    # Update live status before training
+                    write_live_status({
+                        'active': True,
+                        'mineral': mineral,
+                        'current_run': self.run_count + 1,
+                        'total_runs': self.max_runs or 999999,
+                        'current_score': None,
+                        'best_score': max(self.best_scores.values()) if self.best_scores else 0,
+                        'message': f'Training {mineral} - Run #{self.run_count + 1}',
+                        'timestamp': datetime.datetime.now().isoformat()
+                    })
+
                     # Generate configuration
                     features_file, deposits_file = self._get_data_files(mineral)
                     print(f"   📁 Features: {features_file}", flush=True)
-                    
+
                     hyperparams = self._generate_hyperparams(mineral)
                     print(f"   🔧 Hyperparams: {hyperparams}", flush=True)
-                    
+
                     config = TrainingConfig(
                         mineral=mineral,
                         features_file=features_file,
@@ -419,19 +453,43 @@ class ContinuousTrainer:
                         hyperparams=hyperparams,
                         timestamp=datetime.datetime.now().isoformat()
                     )
-                    
+
                     print(f"   ⚙️  Running {self.mode} pipeline...", flush=True)
                     # Run training
                     result = self._run_single_training(config)
                     self.run_count += 1
-                    
+
                     # Update tracking
                     if result.success and result.score:
                         self._update_best_score(mineral, result.score)
                         print(f"   ✅ Finished {mineral} - Score: {result.score:.4f} (Duration: {result.duration:.1f}s)", flush=True)
+
+                        # Update live status with success
+                        write_live_status({
+                            'active': True,
+                            'mineral': mineral,
+                            'current_run': self.run_count,
+                            'total_runs': self.max_runs or 999999,
+                            'current_score': result.score,
+                            'best_score': max(self.best_scores.values()) if self.best_scores else result.score,
+                            'message': f'✅ {mineral} completed - Score: {result.score:.4f}',
+                            'timestamp': datetime.datetime.now().isoformat()
+                        })
                     else:
                         print(f"   ❌ Failed {mineral} - Error: {result.error}", flush=True)
-                    
+
+                        # Update live status with failure
+                        write_live_status({
+                            'active': True,
+                            'mineral': mineral,
+                            'current_run': self.run_count,
+                            'total_runs': self.max_runs or 999999,
+                            'current_score': None,
+                            'best_score': max(self.best_scores.values()) if self.best_scores else 0,
+                            'message': f'❌ {mineral} failed - {result.error}',
+                            'timestamp': datetime.datetime.now().isoformat()
+                        })
+
                     # Record history
                     self.run_history.append({
                         'run': self.run_count,
@@ -442,27 +500,51 @@ class ContinuousTrainer:
                         'error': result.error,
                         'config': config.hyperparams
                     })
-                    
+
                     # Cleanup poor models
                     if result.success:
                         self._cleanup_poor_models(result)
-                    
+
                     # Save state periodically
                     if self.run_count % 10 == 0:
                         self._save_state()
                         self._print_summary()
                         print(f"\n📊 Progress: {self.run_count} runs completed", flush=True)
                         print(f"🏆 Best scores: {self.best_scores}", flush=True)
-                    
+
                     # Small delay between runs
                     time.sleep(1)
-        
+
         except Exception as e:
             logger.error(f"Unexpected error in training loop: {e}")
             print(f"\n💥 Error: {e}", flush=True)
-        
+
+            # Update live status with error
+            write_live_status({
+                'active': False,
+                'mineral': '',
+                'current_run': self.run_count,
+                'total_runs': self.max_runs or 999999,
+                'current_score': None,
+                'best_score': max(self.best_scores.values()) if self.best_scores else 0,
+                'message': f'Error: {str(e)}',
+                'timestamp': datetime.datetime.now().isoformat()
+            })
+
         finally:
             self._save_state()
+
+            # Write final live status
+            write_live_status({
+                'active': False,
+                'mineral': '',
+                'current_run': self.run_count,
+                'total_runs': self.max_runs or 999999,
+                'current_score': None,
+                'best_score': max(self.best_scores.values()) if self.best_scores else 0,
+                'message': 'Training completed',
+                'timestamp': datetime.datetime.now().isoformat()
+            })
             self._print_summary()
             logger.info("Continuous training stopped")
             print("\n🛑 Continuous training stopped", flush=True)
